@@ -25,3 +25,5 @@ storage/*
 # Sistema
 .DS_Store
 Thumbs.db
+.vercel
+.env*
