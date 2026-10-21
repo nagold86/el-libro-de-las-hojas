@@ -89,6 +89,35 @@ selector nativo del navegador; si no está disponible, cae a la descarga normal.
 **Limpiar** vacía el almanaque con una única `DELETE /api/inspections`, previa
 confirmación con la cantidad de inspecciones (ADR-011).
 
+## Despliegue
+
+Demo pública: [el-libro-de-las-hojas.vercel.app](https://el-libro-de-las-hojas.vercel.app).
+Repositorio: [nagold86/el-libro-de-las-hojas](https://github.com/nagold86/el-libro-de-las-hojas).
+
+La pantalla y la API corren como una sola función Python (`app/main.py`, 60 s de
+duración máxima según `vercel.json`), así que no hay CORS ni segundo servicio.
+Son condiciones de demo, no de producción (ADR-012):
+
+- **Almacenamiento efímero.** Con `VERCEL` presente, `app/config.py` mueve el
+  repositorio a `/tmp/fellowship-storage` y baja el límite de subida a 4 MB
+  (Vercel corta el cuerpo en 4,5 MB). En local no cambia nada: `storage/` y
+  10 MB. `FELLOWSHIP_STORAGE_DIR` sigue disponible para apuntar a un volumen
+  persistente.
+- **El almanaque es de sesión.** Las fotos y medidas sobreviven mientras la
+  instancia siga viva y pueden perderse al reiniciarse. La demo muestra el
+  método y el contrato, no un historial garantizado.
+- **Solo viaja lo necesario.** `.vercelignore` deja fuera `imgs/`, `storage/`,
+  `docs/`, `fellowship/`, `tests/` y `sandbox/`.
+
+Para republicar, desde la raíz:
+
+```powershell
+vercel --prod
+```
+
+El repositorio no está conectado a Vercel: un `git push` no despliega. Si querés
+publicación automática, conectalo desde el panel del proyecto en Vercel.
+
 ## Estado
 
 Esqueleto contract-first completo y verificado con la suite de tests:
@@ -102,6 +131,8 @@ Esqueleto contract-first completo y verificado con la suite de tests:
   el informe del lote (cifras, gráficos, impresión A4 y copia HTML guardable) y
   el vaciado confirmado del almanaque.
 - `tests/` de contrato, arquitectura y unitarios; `python -m pytest` en verde.
+- Publicado en Vercel como demo (`/tmp`, 4 MB): subida, informe, artefactos y
+  vaciado verificados contra la URL pública, sin errores de consola (ADR-012).
 
 Pendiente: ingesta con manifest y hashes (`data/`), conjunto golden y validación
 por lote de Boromir.

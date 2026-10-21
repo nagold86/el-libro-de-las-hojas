@@ -114,4 +114,6 @@ clásico corre de punta a punta con aislamiento de hoja, la API expone
 Libro de las Hojas» consume ambos con el Almanaque y su informe imprimible. El
 MVP cierra con dos acciones: **Limpiar** vacía el almanaque con una única
 `DELETE /api/inspections` previa confirmación, y **Guardar** produce una copia
-HTML autocontenida del informe en la carpeta que elija el usuario.
+HTML autocontenida del informe en la carpeta que elija el usuario. La demo
+pública vive en Vercel con almacenamiento efímero (`/tmp`, subidas de 4 MB):
+verifica contrato y método, no persistencia entre instancias (ADR-012).

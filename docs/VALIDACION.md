@@ -18,6 +18,34 @@ Formato de cada entrada:
 
 ---
 
+## 2026-10-21 — producción en Vercel (demo efímera)
+
+- n: 1 hoja externa (primer plano USDA ARS, 880×1085) subida contra la URL
+  pública; el almacén de producción arrancó vacío y volvió a quedar vacío.
+- Flujo real: `POST /api/inspections` → `201` con 99 lesiones y 6,22 % de área
+  afectada; el PNG de resultado y el original se sirven desde `/media`;
+  `GET /api/reports/lot` responde `200` con el registro; `DELETE
+  /api/inspections` → `204` y `GET /api/inspections` → `[]`.
+- Interfaz: «servicio en línea · v0.1.0», Almanaque «sin inspecciones» tras el
+  vaciado, «Limpiar» deshabilitado con archivo vacío y «Actualizar» habilitado.
+  Informe vacío correcto («0 imágenes aceptadas», «SIN DATOS», sin imágenes),
+  «Guardar» deshabilitado. Cero mensajes de consola y cero respuestas 4xx/5xx
+  en 13 pedidos: `/`, `/api/health`, `/api/config`, `/api/inspections`,
+  `/api/reports/lot` y las fuentes.
+- Layout: sin desborde horizontal a 1440×900 (1425 px de ancho útil) ni a
+  390×844 (375 px); la página apila en una columna en móvil.
+- Configuración efectiva en producción: storage `/tmp/fellowship-storage`,
+  `max_upload_bytes` 4 MB (`GET /api/config`), 60 s de duración máxima.
+- Fuga de datos: ninguna; `.vercelignore` excluye `imgs/`, `storage/`,
+  `docs/`, `fellowship/`, `tests/` y `sandbox/`, y el almacén local no viaja.
+- Observación menor: en la ventana headless, Escape no cerró el diálogo del
+  informe; el botón «Cerrar» sí. No se pudo distinguir si es un artefacto del
+  evento sintético o un defecto real; queda como chequeo manual pendiente.
+- Veredicto: APTO para demo. El almanaque es de sesión por diseño (ADR-012):
+  no se acredita persistencia entre instancias.
+
+---
+
 ## 2026-10-21 — cierre del MVP: vaciar el almanaque y copia del informe
 
 - n: 4 inspecciones reales en `storage/` durante la prueba de navegador.

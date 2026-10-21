@@ -6,6 +6,51 @@ por Gandalf y aprobada por quien resulte afectado.
 
 ---
 
+## ADR-012 — Demo en Vercel con almacenamiento efímero declarado
+
+**Contexto.** El MVP corría solo en local, con FastAPI y OpenCV sobre el disco
+del proyecto. El usuario pidió publicarlo: un repositorio nuevo en GitHub con lo
+necesario y un despliegue en Vercel. El backend es Python con OpenCV, SciPy y
+NumPy, y el almanaque escribe en disco; Vercel ejecuta funciones serverless con
+el proyecto de solo lectura, `/tmp` escribible y efímero, y un cuerpo de pedido
+limitado a 4,5 MB.
+
+**Decisión.** Se publica la app completa (pantalla y API) como una única función
+Python en Vercel, con `vercel.json` apuntando a `app/main.py` (60 s de duración
+máxima). `Settings.from_env()` (`app/config.py`) detecta `VERCEL` y, sin tocar el
+código, cambia dos valores: el repositorio pasa a `/tmp/fellowship-storage` y el
+límite de subida baja a 4 MB para dejar margen al `multipart`. En local no cambia
+nada: sigue `storage/` y 10 MB. `FELLOWSHIP_STORAGE_DIR` sigue siendo la vía para
+apuntar a un volumen o servicio externo sin recompilar.
+
+**Consecuencia aceptada.** El almanaque de la demo es de sesión: sobrevive
+mientras la instancia siga caliente y puede vaciarse al reiniciarse o al caer en
+otra instancia. El botón «Limpiar» y el informe funcionan sobre lo que haya en
+esa instancia. Es una demo de contrato y de método, no un servicio de producción
+con historial garantizado; la página lo advierte en el README.
+
+**Alternativas descartadas.** Storage externo (S3/R2/Supabase) desde el primer
+deploy: exige cuenta, credenciales y un repositorio asíncrono, y no era necesario
+para cerrar el MVP; queda como evolución natural porque el repositorio es
+inyectable. Solo frontend en Vercel con la API en Render/Fly: dos servicios y dos
+cuentas para una demo. Servir el informe como PDF generado en el servidor:
+sumaría dependencias y el HTML autocontenido ya se imprime igual.
+
+**Evidencia.** Producción responde `200` en `/api/health`, `/`, `/api/config`,
+`/api/inspections` y `/api/reports/lot`. El flujo real se verificó contra la URL
+pública: subida `201` con 99 lesiones y 6,22 %, PNG y original servidos, y
+`DELETE /api/inspections` dejando el almanaque vacío. En navegador: «en línea»,
+cero errores de consola, cero respuestas 4xx/5xx, sin desborde horizontal a
+1440 px ni a 390 px.
+
+**Reversibilidad.** Alta: los dos valores viven en `config.py` y `vercel.json`.
+Conectar un storage persistente es cambiar una variable de entorno.
+
+**Afecta a.** Aragorn (despliegue y contrato), Frodo (persistencia y artefactos),
+Boromir (qué se puede afirmar de una demo efímera).
+
+---
+
 ## ADR-011 — Vaciar el almanaque con una sola ruta idempotente
 
 **Contexto.** El Almanaque solo permitía borrar una inspección por vez. Limpiar
