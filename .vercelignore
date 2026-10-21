@@ -1,0 +1,13 @@
+# Lo que no se sube al despliegue de Vercel
+imgs/
+sandbox/
+storage/*
+!storage/.gitkeep
+.qoder/
+.vercel-tmp/
+docs/
+fellowship/
+tests/
+.pytest_cache/
+**/__pycache__/
+*.py[cod]

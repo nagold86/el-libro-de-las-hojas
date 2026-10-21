@@ -1,0 +1,1268 @@
+/* El Libro de las Hojas — consumo del contrato y estados de pantalla.
+   Sin frameworks: el contrato manda y la pantalla se adapta. */
+
+(() => {
+  "use strict";
+
+  const API = "/api";
+  const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+  const state = {
+    items: [],
+    current: null,
+    pendingDelete: null,
+    pendingClear: false,
+    maxUploadBytes: DEFAULT_MAX_BYTES,
+    allowedFormats: ["PNG", "JPEG"],
+    busy: false,
+    reportRequest: 0,
+  };
+
+  const els = {
+    health: document.getElementById("health"),
+    healthText: document.getElementById("health-text"),
+    dropzone: document.getElementById("dropzone"),
+    pick: document.getElementById("pick"),
+    input: document.getElementById("file-input"),
+    dropHint: document.getElementById("drop-hint"),
+    alert: document.getElementById("alert"),
+    alertMessage: document.getElementById("alert-message"),
+    status: document.getElementById("status"),
+    statusText: document.getElementById("status-text"),
+    live: document.getElementById("live"),
+    result: document.getElementById("result"),
+    resultTitle: document.getElementById("result-title"),
+    resultMeta: document.getElementById("result-meta"),
+    seal: document.getElementById("seal"),
+    sealWord: document.getElementById("seal-word"),
+    verdictNote: document.getElementById("verdict-note"),
+    metrics: document.getElementById("metrics"),
+    overlay: document.getElementById("overlay"),
+    trace: document.getElementById("trace-json"),
+    originalLink: document.getElementById("original-link"),
+    deleteCurrent: document.getElementById("delete-current"),
+    ledgerList: document.getElementById("ledger-list"),
+    ledgerCount: document.getElementById("ledger-count"),
+    ledgerEmpty: document.getElementById("ledger-empty"),
+    refresh: document.getElementById("refresh"),
+    clearArchive: document.getElementById("clear-archive"),
+    dialog: document.getElementById("confirm-delete"),
+    confirmTitle: document.getElementById("confirm-title"),
+    confirmText: document.getElementById("confirm-text"),
+    confirmAccept: document.getElementById("confirm-accept"),
+    reportOpen: document.getElementById("report-open"),
+    reportDialog: document.getElementById("lot-report"),
+    reportTitle: document.getElementById("report-title"),
+    reportSubtitle: document.getElementById("report-subtitle"),
+    reportSeal: document.getElementById("report-seal"),
+    reportSealWord: document.getElementById("report-seal-word"),
+    reportSevere: document.getElementById("report-severe"),
+    reportSave: document.getElementById("report-save"),
+    reportSaveStatus: document.getElementById("report-save-status"),
+    reportPrint: document.getElementById("report-print"),
+    reportEmpty: document.getElementById("report-empty"),
+    reportLoading: document.getElementById("report-loading"),
+    reportError: document.getElementById("report-error"),
+    reportErrorText: document.getElementById("report-error-text"),
+    reportBody: document.getElementById("report-body"),
+    reportImages: document.getElementById("report-images"),
+    reportLesions: document.getElementById("report-lesions"),
+    reportAreaMedian: document.getElementById("report-area-median"),
+    reportWorstArea: document.getElementById("report-worst-area"),
+    reportWorstName: document.getElementById("report-worst-name"),
+    reportHistogram: document.getElementById("report-histogram"),
+    reportHistogramData: document.getElementById("report-histogram-data"),
+    reportScatter: document.getElementById("report-scatter"),
+    reportScatterData: document.getElementById("report-scatter-data"),
+    reportRanking: document.getElementById("report-ranking"),
+    reportRankingData: document.getElementById("report-ranking-data"),
+    reportRows: document.getElementById("report-rows"),
+    reportQuality: document.getElementById("report-quality"),
+    reportMethods: document.getElementById("report-methods"),
+  };
+
+  const numberFormat = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 });
+  const dateFormat = new Intl.DateTimeFormat("es-AR", { dateStyle: "medium", timeStyle: "short" });
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  const format = {
+    int: (value) => numberFormat.format(value),
+    num: (value) => numberFormat.format(value),
+    pct: (value) => `${numberFormat.format(value * 100)} %`,
+  };
+
+  function announce(message) {
+    els.live.textContent = "";
+    window.setTimeout(() => {
+      els.live.textContent = message;
+    }, 30);
+  }
+
+  function formatDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "—" : dateFormat.format(date);
+  }
+
+  const SEVERITY_ORDER = ["sano", "leve", "moderado", "severo"];
+  const SEVERITY_LABELS = {
+    sano: "Sano",
+    leve: "Leve",
+    moderado: "Moderado",
+    severo: "Severo",
+    sin_datos: "Sin datos",
+  };
+  const HISTOGRAM_BINS = [
+    { label: "0–1 %", test: (value) => value < 1 },
+    { label: "1–2 %", test: (value) => value < 2 },
+    { label: "2–5 %", test: (value) => value < 5 },
+    { label: "5–10 %", test: (value) => value < 10 },
+    { label: "10–20 %", test: (value) => value < 20 },
+    { label: "≥ 20 %", test: () => true },
+  ];
+  const FLAG_LABELS = {
+    borrosa: "borrosa",
+    poca_superficie_valida: "poca superficie válida",
+    sobreexpuesta: "sobreexpuesta",
+  };
+  const METHOD_LABELS = {
+    primer_plano: "primer plano",
+    grabcut: "GrabCut",
+    desconocido: "sin registro",
+  };
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const reportBandSegments = Object.fromEntries(
+    SEVERITY_ORDER.map((key) => [key, document.getElementById(`report-band-${key}`)])
+  );
+  const reportSeverityNodes = Object.fromEntries(
+    SEVERITY_ORDER.map((key) => [
+      key,
+      {
+        count: document.getElementById(`report-sev-${key}-count`),
+        pct: document.getElementById(`report-sev-${key}-pct`),
+      },
+    ])
+  );
+
+  function plural(count, singular, pluralForm) {
+    return `${format.int(count)} ${count === 1 ? singular : pluralForm}`;
+  }
+
+  function severityKey(areaFraction) {
+    if (areaFraction < 0.01) return "sano";
+    if (areaFraction < 0.05) return "leve";
+    if (areaFraction < 0.15) return "moderado";
+    return "severo";
+  }
+
+  function formatFlag(flag) {
+    return FLAG_LABELS[flag] || String(flag).replaceAll("_", " ");
+  }
+
+  function formatMethod(method) {
+    return METHOD_LABELS[method] || String(method || "desconocido").replaceAll("_", " ");
+  }
+
+  function truncateName(name, limit = 26) {
+    const text = name || "sin nombre";
+    return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+  }
+
+  function svgNode(tag, attributes = {}, text = "") {
+    const node = document.createElementNS(SVG_NS, tag);
+    Object.entries(attributes).forEach(([key, value]) => {
+      if (value !== null && value !== undefined) node.setAttribute(key, String(value));
+    });
+    if (text !== "") node.textContent = text;
+    return node;
+  }
+
+  function svgText(parent, x, y, text, className, anchor = "start") {
+    parent.append(svgNode("text", { x, y, class: className, "text-anchor": anchor }, text));
+  }
+
+  function mountChart(container, svg, label) {
+    container.replaceChildren(svg);
+    container.setAttribute("aria-label", label);
+  }
+
+  function niceAreaMax(value) {
+    if (value <= 5) return 5;
+    if (value <= 10) return 10;
+    if (value <= 20) return 20;
+    if (value <= 30) return 30;
+    if (value <= 50) return 50;
+    if (value <= 75) return 75;
+    if (value <= 100) return 100;
+    return Math.ceil(value / 25) * 25;
+  }
+
+  function histogramCounts(points) {
+    const counts = HISTOGRAM_BINS.map(() => 0);
+    points.forEach((point) => {
+      const area = Math.max(0, Number(point.area_fraction) || 0) * 100;
+      const index = HISTOGRAM_BINS.findIndex((bin) => bin.test(area));
+      counts[index === -1 ? counts.length - 1 : index] += 1;
+    });
+    return counts;
+  }
+
+  function buildHistogram(points) {
+    const width = 720;
+    const height = 268;
+    const margin = { left: 52, right: 16, top: 24, bottom: 48 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const counts = histogramCounts(points);
+    const maxCount = Math.max(...counts, 1);
+    const yMax = Math.max(4, Math.ceil(maxCount / 4) * 4);
+    const svg = svgNode("svg", {
+      viewBox: `0 0 ${width} ${height}`,
+      preserveAspectRatio: "xMidYMid meet",
+      "aria-hidden": "true",
+      focusable: "false",
+    });
+
+    for (let tick = 0; tick <= 4; tick += 1) {
+      const value = (yMax / 4) * tick;
+      const y = margin.top + plotHeight - (value / yMax) * plotHeight;
+      svg.append(
+        svgNode("line", {
+          x1: margin.left,
+          x2: width - margin.right,
+          y1: y,
+          y2: y,
+          class: tick === 0 ? "chart-baseline" : "chart-grid",
+        })
+      );
+      svgText(svg, margin.left - 8, y + 4, format.int(value), "chart-tick", "end");
+    }
+
+    const slot = plotWidth / counts.length;
+    const barWidth = slot * 0.58;
+    counts.forEach((count, index) => {
+      const x = margin.left + slot * index + (slot - barWidth) / 2;
+      const barHeight = (count / yMax) * plotHeight;
+      const y = margin.top + plotHeight - barHeight;
+      if (count > 0) {
+        svg.append(
+          svgNode("rect", {
+            x,
+            y,
+            width: barWidth,
+            height: barHeight,
+            class: "chart-bar",
+          })
+        );
+        svgText(svg, x + barWidth / 2, y - 6, format.int(count), "chart-value", "middle");
+      } else {
+        svgText(
+          svg,
+          x + barWidth / 2,
+          margin.top + plotHeight - 6,
+          "0",
+          "chart-value",
+          "middle"
+        );
+      }
+      svgText(
+        svg,
+        x + barWidth / 2,
+        margin.top + plotHeight + 20,
+        HISTOGRAM_BINS[index].label,
+        "chart-tick",
+        "middle"
+      );
+    });
+
+    svgText(svg, margin.left, 14, "Hojas (n)", "chart-axis-title");
+    svgText(
+      svg,
+      margin.left + plotWidth / 2,
+      height - 8,
+      "Área afectada (% de la superficie válida)",
+      "chart-axis-title",
+      "middle"
+    );
+
+    const dominantIndex = counts.indexOf(Math.max(...counts));
+    const label =
+      `Histograma de ${plural(points.length, "hoja", "hojas")}; ` +
+      `el intervalo más poblado es ${HISTOGRAM_BINS[dominantIndex].label} ` +
+      `con ${format.int(counts[dominantIndex])}.`;
+    return { svg, counts, label };
+  }
+
+  function renderHistogramData(counts) {
+    const rows = counts.map((count, index) => {
+      const row = document.createElement("tr");
+      const label = document.createElement("td");
+      label.textContent = HISTOGRAM_BINS[index].label;
+      const value = document.createElement("td");
+      value.className = "is-number";
+      value.textContent = format.int(count);
+      row.append(label, value);
+      return row;
+    });
+    els.reportHistogramData.replaceChildren(...rows);
+  }
+
+  function buildScatter(points) {
+    const width = 720;
+    const height = 340;
+    const margin = { left: 56, right: 24, top: 24, bottom: 56 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const lesionCounts = points.map((point) => Math.max(0, Number(point.lesion_count) || 0));
+    const areas = points.map(
+      (point) => Math.max(0, Number(point.area_fraction) || 0) * 100
+    );
+    const maxLesions = Math.max(1, ...lesionCounts);
+    const minLesions = Math.min(...lesionCounts);
+    const maxArea = Math.max(0, ...areas);
+    const minArea = Math.min(...areas);
+    const xMax = Math.max(4, Math.ceil(maxLesions / 4) * 4);
+    const yMax = niceAreaMax(maxArea * 1.05);
+    const svg = svgNode("svg", {
+      viewBox: `0 0 ${width} ${height}`,
+      preserveAspectRatio: "xMidYMid meet",
+      "aria-hidden": "true",
+      focusable: "false",
+    });
+
+    for (let tick = 0; tick <= 5; tick += 1) {
+      const value = (yMax / 5) * tick;
+      const y = margin.top + plotHeight - (tick / 5) * plotHeight;
+      svg.append(
+        svgNode("line", {
+          x1: margin.left,
+          x2: width - margin.right,
+          y1: y,
+          y2: y,
+          class: tick === 0 ? "chart-baseline" : "chart-grid",
+        })
+      );
+      svgText(svg, margin.left - 8, y + 4, format.num(value), "chart-tick", "end");
+    }
+
+    for (let tick = 0; tick <= 4; tick += 1) {
+      const value = (xMax / 4) * tick;
+      const x = margin.left + (tick / 4) * plotWidth;
+      svg.append(
+        svgNode("line", {
+          x1: x,
+          x2: x,
+          y1: margin.top,
+          y2: margin.top + plotHeight,
+          class: tick === 0 ? "chart-baseline" : "chart-grid",
+        })
+      );
+      svgText(
+        svg,
+        x,
+        margin.top + plotHeight + 20,
+        format.int(value),
+        "chart-tick",
+        "middle"
+      );
+    }
+
+    points.forEach((point, index) => {
+      const areaFraction = Math.max(0, Number(point.area_fraction) || 0);
+      const x = margin.left + (lesionCounts[index] / xMax) * plotWidth;
+      const y = margin.top + plotHeight - (areas[index] / yMax) * plotHeight;
+      const key = severityKey(areaFraction);
+      const name = point.filename || "sin nombre";
+      let shape;
+      if (key === "severo") {
+        shape = svgNode("path", {
+          d: `M ${x} ${y - 5} L ${x + 5} ${y} L ${x} ${y + 5} L ${x - 5} ${y} Z`,
+          class: "chart-point chart-point--severo",
+        });
+      } else {
+        shape = svgNode("circle", {
+          cx: x,
+          cy: y,
+          r: 4,
+          class: `chart-point chart-point--${key}`,
+        });
+      }
+      shape.append(
+        svgNode(
+          "title",
+          {},
+          `${name} · ${format.int(lesionCounts[index])} lesiones · ` +
+            `${format.num(areas[index])} % · ${SEVERITY_LABELS[key]}`
+        )
+      );
+      svg.append(shape);
+    });
+
+    svgText(svg, margin.left, 14, "Área afectada (%)", "chart-axis-title");
+    svgText(
+      svg,
+      margin.left + plotWidth / 2,
+      height - 8,
+      "Lesiones (componentes)",
+      "chart-axis-title",
+      "middle"
+    );
+
+    const label =
+      `Dispersión de ${plural(points.length, "hoja", "hojas")}; ` +
+      `entre ${format.int(minLesions)} y ${format.int(maxLesions)} lesiones, ` +
+      `área afectada de ${format.num(minArea)} % a ${format.num(maxArea)} %.`;
+    return { svg, label };
+  }
+
+  function renderScatterData(points) {
+    const rows = points.map((point) => {
+      const area = Math.max(0, Number(point.area_fraction) || 0);
+      const row = document.createElement("tr");
+      const name = document.createElement("td");
+      name.textContent = point.filename || "sin nombre";
+      const lesions = document.createElement("td");
+      lesions.className = "is-number";
+      lesions.textContent = format.int(Math.max(0, Number(point.lesion_count) || 0));
+      const areaCell = document.createElement("td");
+      areaCell.className = "is-number";
+      areaCell.textContent = format.num(area * 100);
+      const level = document.createElement("td");
+      level.textContent = SEVERITY_LABELS[severityKey(area)];
+      row.append(name, lesions, areaCell, level);
+      return row;
+    });
+    els.reportScatterData.replaceChildren(...rows);
+  }
+
+  function buildRanking(worst) {
+    const entries = worst.slice(0, 5);
+    const width = 720;
+    const height = 40 + 34 * Math.max(entries.length, 1);
+    const margin = { left: 190, right: 64, top: 12, bottom: 36 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const areas = entries.map(
+      (point) => Math.max(0, Number(point.area_fraction) || 0) * 100
+    );
+    const maxArea = Math.max(0, ...areas);
+    const xMax = niceAreaMax(maxArea * 1.05);
+    const baselineY = margin.top + plotHeight;
+    const svg = svgNode("svg", {
+      viewBox: `0 0 ${width} ${height}`,
+      preserveAspectRatio: "xMidYMid meet",
+      "aria-hidden": "true",
+      focusable: "false",
+    });
+
+    for (let tick = 0; tick <= 5; tick += 1) {
+      const value = (xMax / 5) * tick;
+      const x = margin.left + (tick / 5) * plotWidth;
+      svg.append(
+        svgNode("line", {
+          x1: x,
+          x2: x,
+          y1: margin.top,
+          y2: baselineY,
+          class: tick === 0 ? "chart-baseline" : "chart-grid",
+        })
+      );
+      svgText(svg, x, baselineY + 16, format.num(value), "chart-tick", "middle");
+    }
+
+    entries.forEach((point, index) => {
+      const name = point.filename || "sin nombre";
+      const y = margin.top + index * 34 + 8;
+      const barWidth = xMax > 0 ? (areas[index] / xMax) * plotWidth : 0;
+      const nameNode = svgNode(
+        "text",
+        {
+          x: margin.left - 12,
+          y: y + 13,
+          class: "chart-tick",
+          "text-anchor": "end",
+        },
+        truncateName(name)
+      );
+      nameNode.append(svgNode("title", {}, name));
+      svg.append(nameNode);
+      svg.append(
+        svgNode("rect", {
+          x: margin.left,
+          y,
+          width: Math.max(barWidth, 0),
+          height: 18,
+          class: index === 0 ? "chart-bar chart-bar--worst" : "chart-bar",
+        })
+      );
+      svgText(
+        svg,
+        margin.left + barWidth + 6,
+        y + 13,
+        format.num(areas[index]),
+        "chart-value"
+      );
+    });
+
+    svgText(
+      svg,
+      margin.left + plotWidth / 2,
+      height - 4,
+      "Área afectada (% de la superficie válida)",
+      "chart-axis-title",
+      "middle"
+    );
+
+    const worstPoint = entries[0];
+    const label = worstPoint
+      ? `Ranking de ${plural(entries.length, "hoja", "hojas")} por área afectada; ` +
+        `la peor es ${worstPoint.filename || "sin nombre"} con ${format.num(areas[0])} %.`
+      : "Ranking de hojas por área afectada sin datos.";
+    return { svg, label };
+  }
+
+  function renderRankingData(worst) {
+    const rows = worst.slice(0, 5).map((point) => {
+      const area = Math.max(0, Number(point.area_fraction) || 0);
+      const row = document.createElement("tr");
+      const name = document.createElement("td");
+      name.textContent = point.filename || "sin nombre";
+      const areaCell = document.createElement("td");
+      areaCell.className = "is-number";
+      areaCell.textContent = format.num(area * 100);
+      const level = document.createElement("td");
+      level.textContent = SEVERITY_LABELS[severityKey(area)];
+      row.append(name, areaCell, level);
+      return row;
+    });
+    els.reportRankingData.replaceChildren(...rows);
+  }
+
+  function buildReportRow(point) {
+    const area = Math.max(0, Number(point.area_fraction) || 0);
+    const key = severityKey(area);
+    const row = document.createElement("tr");
+    row.className = "report-row";
+    row.dataset.severity = key;
+
+    const nameCell = document.createElement("td");
+    nameCell.dataset.label = "Hoja";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "report-open";
+    open.dataset.id = point.id || "";
+    open.textContent = point.filename || "sin nombre";
+    open.title = point.filename || "sin nombre";
+    open.setAttribute(
+      "aria-label",
+      `Abrir la inspección de ${point.filename || "la hoja sin nombre"}`
+    );
+    nameCell.append(open);
+
+    const dateCell = document.createElement("td");
+    dateCell.dataset.label = "Fecha";
+    dateCell.textContent = formatDate(point.created_at);
+
+    const lesionsCell = document.createElement("td");
+    lesionsCell.dataset.label = "Lesiones";
+    lesionsCell.className = "is-number";
+    lesionsCell.textContent = format.int(Math.max(0, Number(point.lesion_count) || 0));
+
+    const areaCell = document.createElement("td");
+    areaCell.dataset.label = "Área (%)";
+    areaCell.className = "is-number";
+    areaCell.textContent = format.num(area * 100);
+
+    const feretCell = document.createElement("td");
+    feretCell.dataset.label = "Feret máx. (px)";
+    feretCell.className = "is-number";
+    feretCell.textContent = format.num(Math.max(0, Number(point.max_feret_px) || 0));
+
+    const qualityCell = document.createElement("td");
+    qualityCell.dataset.label = "Calidad / aislamiento";
+    const flags = Array.isArray(point.quality_flags) ? point.quality_flags : [];
+    const qualityText = flags.length ? flags.map(formatFlag).join(", ") : "sin advertencias";
+    qualityCell.textContent = `${qualityText} · ${formatMethod(point.isolation_method)}`;
+
+    row.append(nameCell, dateCell, lesionsCell, areaCell, feretCell, qualityCell);
+    return row;
+  }
+
+  function renderReportNotes(report) {
+    const quality = Object.entries(report.quality_flags || {}).map(([flag, count]) => {
+      const item = document.createElement("li");
+      item.textContent = `${formatFlag(flag)} · ${plural(Number(count) || 0, "hoja", "hojas")}`;
+      return item;
+    });
+    els.reportQuality.replaceChildren(...quality);
+
+    const methods = Object.entries(report.isolation_methods || {}).map(([method, count]) => {
+      const item = document.createElement("li");
+      item.textContent = `${formatMethod(method)} · ${plural(Number(count) || 0, "hoja", "hojas")}`;
+      return item;
+    });
+    els.reportMethods.replaceChildren(...methods);
+  }
+
+  function showReportState(kind) {
+    els.reportLoading.hidden = kind !== "loading";
+    els.reportEmpty.hidden = kind !== "empty";
+    els.reportError.hidden = kind !== "error";
+    els.reportBody.hidden = kind !== "body";
+    els.reportSave.disabled = kind !== "body";
+  }
+
+  function resetReport() {
+    els.reportSubtitle.textContent = "—";
+    els.reportSeal.dataset.level = "sin_datos";
+    els.reportSealWord.textContent = "Sin datos";
+    els.reportSevere.hidden = true;
+    els.reportWorstName.textContent = "—";
+    els.reportWorstName.removeAttribute("title");
+    els.reportErrorText.textContent = "";
+    els.reportSaveStatus.textContent = "";
+    showReportState("loading");
+  }
+
+  function renderReport(report) {
+    const points = Array.isArray(report.points) ? report.points : [];
+    const totals = report.totals || {};
+    const images = Number(totals.images) || 0;
+    els.reportSubtitle.textContent =
+      `Generado el ${formatDate(report.generated_at)} · ` +
+      plural(images, "imagen aceptada", "imágenes aceptadas");
+    els.reportImages.textContent = format.int(images);
+    els.reportLesions.textContent = format.int(Number(totals.lesions) || 0);
+    els.reportAreaMedian.textContent = format.num(
+      (Number(totals.median_area_fraction) || 0) * 100
+    );
+
+    const worst = Array.isArray(report.worst) && report.worst.length ? report.worst[0] : null;
+    if (worst) {
+      const area = Math.max(0, Number(worst.area_fraction) || 0);
+      els.reportWorstArea.textContent = format.num(area * 100);
+      els.reportWorstName.textContent = worst.filename || "sin nombre";
+      els.reportWorstName.title = worst.filename || "sin nombre";
+    } else {
+      els.reportWorstArea.textContent = "—";
+      els.reportWorstName.textContent = "—";
+      els.reportWorstName.removeAttribute("title");
+    }
+
+    const level = SEVERITY_LABELS[report.dominant_severity]
+      ? report.dominant_severity
+      : "sin_datos";
+    els.reportSeal.dataset.level = level;
+    els.reportSealWord.textContent = SEVERITY_LABELS[level];
+    els.reportSevere.hidden = !report.has_severe;
+
+    const severity = Array.isArray(report.severity) ? report.severity : [];
+    SEVERITY_ORDER.forEach((key) => {
+      const entry = severity.find((bin) => bin.key === key) || { count: 0, fraction: 0 };
+      const segment = reportBandSegments[key];
+      const nodes = reportSeverityNodes[key];
+      const count = Number(entry.count) || 0;
+      const fraction = Number(entry.fraction) || 0;
+      nodes.count.textContent = format.int(count);
+      nodes.pct.textContent = format.pct(fraction);
+      segment.style.flexGrow = String(fraction);
+      segment.hidden = count === 0;
+    });
+
+    if (points.length === 0) {
+      showReportState("empty");
+      return;
+    }
+
+    const histogram = buildHistogram(points);
+    mountChart(els.reportHistogram, histogram.svg, histogram.label);
+    renderHistogramData(histogram.counts);
+
+    const scatter = buildScatter(points);
+    mountChart(els.reportScatter, scatter.svg, scatter.label);
+    renderScatterData(points);
+
+    const worstEntries = Array.isArray(report.worst) ? report.worst : [];
+    const ranking = buildRanking(worstEntries);
+    mountChart(els.reportRanking, ranking.svg, ranking.label);
+    renderRankingData(worstEntries);
+
+    els.reportRows.replaceChildren(...points.map(buildReportRow));
+    renderReportNotes(report);
+    showReportState("body");
+  }
+
+  async function openReport() {
+    if (typeof els.reportDialog.showModal !== "function") return;
+    const request = state.reportRequest + 1;
+    state.reportRequest = request;
+    resetReport();
+    if (!els.reportDialog.open) els.reportDialog.showModal();
+    els.reportDialog.setAttribute("aria-busy", "true");
+
+    try {
+      const report = await api("/reports/lot");
+      if (request !== state.reportRequest) return;
+      renderReport(report);
+    } catch (error) {
+      if (request !== state.reportRequest) return;
+      els.reportSubtitle.textContent = "—";
+      els.reportErrorText.textContent = error.message;
+      showReportState("error");
+    } finally {
+      if (request === state.reportRequest) {
+        els.reportDialog.setAttribute("aria-busy", "false");
+      }
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character]);
+  }
+
+  function standaloneReportHtml(css) {
+    const sheet = els.reportDialog.querySelector(".report-sheet");
+    if (!sheet) throw new Error("No se encontró la hoja del informe.");
+
+    const clone = sheet.cloneNode(true);
+    clone.querySelectorAll(".report-states").forEach((node) => node.remove());
+    clone.querySelectorAll(".report-actions").forEach((node) => node.remove());
+    clone.querySelectorAll("button").forEach((button) => {
+      const name = document.createElement("span");
+      name.className = "report-saved-name";
+      name.textContent = button.textContent;
+      button.replaceWith(name);
+    });
+
+    const title = escapeHtml(els.reportTitle.textContent);
+    const subtitle = escapeHtml(els.reportSubtitle.textContent);
+    const generated = escapeHtml(new Date().toISOString());
+
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="El Libro de las Hojas">
+<meta name="generated-at" content="${generated}">
+<title>${title} · ${subtitle}</title>
+<style>${css}</style>
+<style>
+  html { color-scheme: light; }
+  body { margin: 0; background: var(--surface); }
+  .report-sheet {
+    width: min(calc(100% - var(--space-6)), var(--report-width));
+    max-width: var(--report-width);
+    max-height: none;
+    margin: 0 auto;
+    overflow: visible;
+  }
+  .report-saved-name {
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+  @media print {
+    .report-sheet { width: auto; max-width: none; margin: 0; padding: 0; }
+  }
+</style>
+</head>
+<body>
+<main class="report-sheet">
+${clone.innerHTML}
+</main>
+</body>
+</html>`;
+  }
+
+  async function loadReportStyles() {
+    const [tokensResponse, stylesResponse] = await Promise.all([
+      fetch("tokens.css"),
+      fetch("styles.css"),
+    ]);
+    if (!tokensResponse.ok || !stylesResponse.ok) {
+      throw new Error("No se pudieron leer los estilos del informe.");
+    }
+    const [tokens, styles] = await Promise.all([
+      tokensResponse.text(),
+      stylesResponse.text(),
+    ]);
+    return `${tokens}\n${styles}`;
+  }
+
+  async function saveReport() {
+    if (els.reportBody.hidden || els.reportSave.disabled) return;
+    els.reportSave.disabled = true;
+    els.reportSaveStatus.textContent = "Preparando la copia…";
+
+    try {
+      const css = await loadReportStyles();
+      const html = standaloneReportHtml(css);
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const filename = `informe-lote-${new Date().toISOString().slice(0, 10)}.html`;
+      let saved = false;
+
+      if (typeof window.showSaveFilePicker === "function") {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: [
+              {
+                description: "Página HTML del informe",
+                accept: { "text/html": [".html"] },
+              },
+            ],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          saved = true;
+        } catch (error) {
+          if (error && error.name === "AbortError") {
+            els.reportSaveStatus.textContent = "";
+            return;
+          }
+          // Si el selector nativo falla, se intenta la descarga del navegador.
+        }
+      }
+
+      if (!saved) {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.rel = "noopener";
+        document.body.append(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      els.reportSaveStatus.textContent = "Copia guardada en esta computadora.";
+      announce("Informe guardado en esta computadora.");
+    } catch (error) {
+      els.reportSaveStatus.textContent = `No se pudo guardar: ${error.message}`;
+    } finally {
+      els.reportSave.disabled = els.reportBody.hidden;
+    }
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(`${API}${path}`, options);
+    if (response.status === 204) return null;
+
+    const isJson = (response.headers.get("content-type") || "").includes("application/json");
+    const body = isJson ? await response.json() : null;
+
+    if (!response.ok) {
+      const detail = body && body.detail;
+      let message = `Error ${response.status}.`;
+      let code = "";
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (detail && typeof detail === "object") {
+        message = detail.message || message;
+        code = detail.code ? ` (${detail.code})` : "";
+      }
+      throw new Error(message + code);
+    }
+    return body;
+  }
+
+  function setHealth(stateName, text) {
+    els.health.dataset.state = stateName;
+    els.healthText.textContent = text;
+  }
+
+  function showError(message) {
+    els.alertMessage.textContent = message;
+    els.alert.hidden = false;
+    announce(`Error: ${message}`);
+  }
+
+  function clearError() {
+    els.alert.hidden = true;
+    els.alertMessage.textContent = "";
+  }
+
+  function setBusy(busy, text = "Analizando la hoja…") {
+    state.busy = busy;
+    els.status.hidden = !busy;
+    els.statusText.textContent = text;
+    els.pick.disabled = busy;
+    els.input.disabled = busy;
+    els.clearArchive.disabled = busy || state.items.length === 0;
+    els.dropzone.setAttribute("aria-busy", String(busy));
+    document.body.toggleAttribute("data-busy", busy);
+  }
+
+  function metric(label, value, unit, formatter = format.num) {
+    const article = document.createElement("article");
+    article.className = "metric";
+
+    const labelEl = document.createElement("p");
+    labelEl.className = "metric-label";
+    labelEl.textContent = label;
+
+    const valueEl = document.createElement("p");
+    valueEl.className = "metric-value";
+    valueEl.textContent = formatter(value);
+
+    const unitEl = document.createElement("p");
+    unitEl.className = "metric-unit";
+    unitEl.textContent = unit;
+
+    article.append(labelEl, valueEl, unitEl);
+    return article;
+  }
+
+  function renderMetrics(record) {
+    els.metrics.replaceChildren(
+      metric("Área afectada", record.lesions.area_fraction, "de la superficie válida", format.pct),
+      metric("Lesiones", record.lesions.count, "componentes", format.int),
+      metric("Feret máximo", record.lesions.max_feret_px, "px", format.num),
+      metric("Circularidad media", record.lesions.mean_circularity, "0 – 1", format.num),
+      metric("Nervadura", record.lesions.vein_density, "de la superficie", format.pct),
+      metric("Nitidez", record.quality.sharpness, "varianza del laplaciano", format.num)
+    );
+  }
+
+  function markCurrent(id) {
+    els.ledgerList.querySelectorAll(".ledger-load").forEach((button) => {
+      if (button.dataset.id === id) button.setAttribute("aria-current", "true");
+      else button.removeAttribute("aria-current");
+    });
+  }
+
+  function renderResult(record) {
+    state.current = record;
+    els.result.hidden = false;
+    els.resultTitle.textContent = record.image.filename;
+    const isolation = record.trace && record.trace.isolation;
+    const analysis = isolation && isolation.analysis;
+    const cropped =
+      analysis &&
+      (analysis.width !== record.image.width || analysis.height !== record.image.height);
+    const sizeText = cropped
+      ? `${record.image.width} × ${record.image.height} px · hoja aislada ` +
+        `${analysis.width} × ${analysis.height} px`
+      : `${record.image.width} × ${record.image.height} px`;
+    els.resultMeta.textContent =
+      `#${record.id.slice(0, 10)} · ${sizeText} · ` +
+      `${record.image.format} · ${formatDate(record.created_at)}`;
+
+    const usable = record.quality.usable;
+    els.seal.className = `seal ${usable ? "seal--ok" : "seal--warn"}`;
+    els.sealWord.textContent = usable ? "Analizable" : "Con reservas";
+
+    const flags = record.quality.flags || [];
+    els.verdictNote.textContent = flags.length
+      ? `Advertencias de calidad: ${flags.join(", ")}.`
+      : "Sin advertencias de calidad. La máscara muestra las lesiones detectadas sobre la hoja analizada.";
+
+    renderMetrics(record);
+    els.overlay.src = record.result_url;
+    els.overlay.alt =
+      `Hoja ${record.image.filename} con ${record.lesions.count} lesiones marcadas en óxido ` +
+      "y nervaduras en oro.";
+    els.trace.textContent = JSON.stringify(record.trace, null, 2);
+    els.originalLink.href = record.original_url;
+    els.deleteCurrent.dataset.id = record.id;
+    els.deleteCurrent.dataset.name = record.image.filename;
+
+    markCurrent(record.id);
+    els.result.scrollIntoView({
+      behavior: reducedMotion.matches ? "auto" : "smooth",
+      block: "start",
+    });
+  }
+
+  function renderLedger(items) {
+    state.items = items;
+    els.ledgerList.replaceChildren();
+
+    const total = items.length;
+    els.ledgerCount.textContent =
+      total === 0 ? "sin inspecciones" : `${total} ${total === 1 ? "inspección" : "inspecciones"}`;
+    els.ledgerEmpty.hidden = total > 0;
+    els.clearArchive.disabled = total === 0 || state.busy;
+
+    items.forEach((record) => {
+      const item = document.createElement("li");
+      item.className = "ledger-item";
+
+      const load = document.createElement("button");
+      load.type = "button";
+      load.className = "ledger-load";
+      load.dataset.id = record.id;
+      load.setAttribute("aria-label", `Abrir la inspección de ${record.image.filename}`);
+
+      const thumb = document.createElement("img");
+      thumb.src = record.result_url;
+      thumb.alt = "";
+      thumb.loading = "lazy";
+      thumb.width = 48;
+      thumb.height = 48;
+
+      const text = document.createElement("span");
+      text.className = "ledger-text";
+      const name = document.createElement("strong");
+      name.textContent = record.image.filename;
+      name.title = record.image.filename;
+      const meta = document.createElement("span");
+      meta.textContent = `${formatDate(record.created_at)} · ${format.pct(record.lesions.area_fraction)}`;
+      text.append(name, meta);
+      load.append(thumb, text);
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "ledger-delete";
+      remove.dataset.id = record.id;
+      remove.dataset.name = record.image.filename;
+      remove.setAttribute("aria-label", `Eliminar la inspección de ${record.image.filename}`);
+      remove.textContent = "×";
+
+      item.append(load, remove);
+      els.ledgerList.append(item);
+    });
+  }
+
+  async function loadLedger() {
+    try {
+      const items = await api("/inspections");
+      renderLedger(items);
+    } catch (error) {
+      showError(`No se pudo leer el archivo: ${error.message}`);
+    }
+  }
+
+  async function selectInspection(id) {
+    if (state.busy) return;
+    try {
+      const record = await api(`/inspections/${encodeURIComponent(id)}`);
+      renderResult(record);
+    } catch (error) {
+      showError(`No se pudo abrir la inspección: ${error.message}`);
+      await loadLedger();
+    }
+  }
+
+  async function upload(file) {
+    if (!file || state.busy) return;
+    clearError();
+
+    if (!["image/png", "image/jpeg"].includes(file.type)) {
+      showError("Seleccioná un archivo PNG o JPEG.");
+      return;
+    }
+    if (file.size > state.maxUploadBytes) {
+      const megabytes = Math.round(state.maxUploadBytes / (1024 * 1024));
+      showError(`La imagen supera el máximo de ${megabytes} MB.`);
+      return;
+    }
+
+    setBusy(true, `Analizando ${file.name}…`);
+    try {
+      const body = new FormData();
+      body.append("file", file, file.name);
+      const record = await api("/inspections", { method: "POST", body });
+      renderResult(record);
+      await loadLedger();
+      announce(`Inspección completada: ${record.lesions.count} lesiones detectadas.`);
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setBusy(false);
+      els.input.value = "";
+    }
+  }
+
+  function openConfirm() {
+    els.dialog.returnValue = "";
+    if (typeof els.dialog.showModal === "function") els.dialog.showModal();
+  }
+
+  function askDelete(id, name) {
+    if (!id) return;
+    state.pendingDelete = id;
+    state.pendingClear = false;
+    els.confirmTitle.textContent = "¿Eliminar esta inspección?";
+    els.confirmAccept.textContent = "Eliminar";
+    els.confirmText.textContent =
+      `Se eliminará “${name}” con su original, su resultado y sus medidas. No se puede deshacer.`;
+    openConfirm();
+  }
+
+  function askClear() {
+    const total = state.items.length;
+    if (!total) return;
+    state.pendingDelete = null;
+    state.pendingClear = true;
+    els.confirmTitle.textContent = "¿Vaciar el almanaque?";
+    els.confirmAccept.textContent = "Vaciar archivo";
+    els.confirmText.textContent =
+      total === 1
+        ? "Se eliminará la única inspección del almanaque, con su original, resultado y medidas. No se puede deshacer."
+        : `Se eliminarán las ${total} inspecciones del almanaque, con sus originales, resultados y medidas. No se puede deshacer.`;
+    openConfirm();
+  }
+
+  async function deleteInspection(id) {
+    try {
+      await api(`/inspections/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (state.current && state.current.id === id) {
+        state.current = null;
+        els.result.hidden = true;
+      }
+      await loadLedger();
+      announce("Inspección eliminada.");
+    } catch (error) {
+      showError(`No se pudo eliminar: ${error.message}`);
+    }
+  }
+
+  async function clearArchive() {
+    if (state.busy) return;
+    clearError();
+    setBusy(true, "Vaciando el almanaque…");
+    try {
+      await api("/inspections", { method: "DELETE" });
+      state.current = null;
+      els.result.hidden = true;
+      markCurrent("");
+      await loadLedger();
+      announce("Almanaque vaciado. No quedan inspecciones.");
+    } catch (error) {
+      showError(`No se pudo vaciar el almanaque: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadConfig() {
+    try {
+      const config = await api("/config");
+      if (typeof config.max_upload_bytes === "number") {
+        state.maxUploadBytes = config.max_upload_bytes;
+      }
+      if (Array.isArray(config.allowed_formats) && config.allowed_formats.length) {
+        state.allowedFormats = config.allowed_formats;
+      }
+      const megabytes = Math.round(state.maxUploadBytes / (1024 * 1024));
+      els.dropHint.textContent =
+        `${state.allowedFormats.join(" o ")} · hasta ${megabytes} MB · ` +
+        "la imagen se analiza en este equipo y queda en el archivo local.";
+    } catch (error) {
+      // El servidor vuelve a validar; el límite por defecto alcanza para seguir.
+      console.warn("No se pudo leer /api/config:", error);
+    }
+  }
+
+  async function loadHealth() {
+    try {
+      const health = await api("/health");
+      setHealth("ok", `servicio en línea · v${health.version}`);
+    } catch {
+      setHealth("down", "servicio sin conexión");
+    }
+  }
+
+  function bindEvents() {
+    els.pick.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (!state.busy) els.input.click();
+    });
+
+    els.dropzone.addEventListener("click", (event) => {
+      if (event.target.closest("button") || state.busy) return;
+      els.input.click();
+    });
+
+    els.input.addEventListener("change", () => {
+      const [file] = els.input.files || [];
+      if (file) upload(file);
+    });
+
+    ["dragenter", "dragover"].forEach((type) => {
+      els.dropzone.addEventListener(type, (event) => {
+        event.preventDefault();
+        if (!state.busy) els.dropzone.classList.add("is-dragover");
+      });
+    });
+
+    ["dragleave", "dragend"].forEach((type) => {
+      els.dropzone.addEventListener(type, () => els.dropzone.classList.remove("is-dragover"));
+    });
+
+    els.dropzone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      els.dropzone.classList.remove("is-dragover");
+      if (state.busy) return;
+      const [file] = event.dataTransfer.files || [];
+      if (file) upload(file);
+    });
+
+    els.ledgerList.addEventListener("click", (event) => {
+      const load = event.target.closest(".ledger-load");
+      const remove = event.target.closest(".ledger-delete");
+      if (load) selectInspection(load.dataset.id);
+      if (remove) askDelete(remove.dataset.id, remove.dataset.name);
+    });
+
+    els.deleteCurrent.addEventListener("click", () => {
+      askDelete(els.deleteCurrent.dataset.id, els.deleteCurrent.dataset.name);
+    });
+
+    els.dialog.addEventListener("close", () => {
+      const id = state.pendingDelete;
+      const clear = state.pendingClear;
+      state.pendingDelete = null;
+      state.pendingClear = false;
+      if (els.dialog.returnValue !== "confirm") return;
+      if (clear) clearArchive();
+      else if (id) deleteInspection(id);
+    });
+
+    els.clearArchive.addEventListener("click", askClear);
+
+    els.refresh.addEventListener("click", async () => {
+      els.refresh.disabled = true;
+      await loadLedger();
+      els.refresh.disabled = false;
+    });
+
+    els.reportOpen.addEventListener("click", openReport);
+
+    els.reportSave.addEventListener("click", saveReport);
+
+    els.reportPrint.addEventListener("click", () => window.print());
+
+    els.reportRows.addEventListener("click", (event) => {
+      const open = event.target.closest(".report-open");
+      if (!open) return;
+      const id = open.dataset.id;
+      if (!id) return;
+      els.reportDialog.close();
+      selectInspection(id);
+    });
+
+    els.reportDialog.addEventListener("close", () => {
+      state.reportRequest += 1;
+      els.reportSaveStatus.textContent = "";
+      els.reportDialog.setAttribute("aria-busy", "false");
+    });
+  }
+
+  async function init() {
+    bindEvents();
+    await Promise.all([loadHealth(), loadConfig()]);
+    await loadLedger();
+  }
+
+  init();
+})();

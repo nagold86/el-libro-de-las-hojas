@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f1e2">
+  <meta name="description" content="El Libro de las Hojas: cuaderno de campo para el análisis de superficie de tabaco con visión clásica.">
+  <title>El Libro de las Hojas · Fellowship</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M14 54V34a18 18 0 0 1 36 0v20' fill='none' stroke='%232c4a33' stroke-width='4' stroke-linejoin='round'/%3E%3Cpath d='M7 54h50' fill='none' stroke='%232c4a33' stroke-width='4' stroke-linecap='round'/%3E%3Ccircle cx='42' cy='42' r='3' fill='%232c4a33'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+  <header class="masthead">
+    <div class="masthead-row">
+      <div class="brand">
+        <span class="brand-seal" aria-hidden="true">
+          <svg viewBox="0 0 64 64" focusable="false">
+            <path class="brand-hill" d="M3 46c7-6 13-6 19-1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <path class="brand-hill" d="M42 45c7-5 13-5 19 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <path class="brand-door" d="M24 52V36a8 8 0 0 1 16 0v16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+            <path class="brand-step" d="M18 52h28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <circle class="brand-knob" cx="36" cy="43" r="1.6" fill="currentColor"/>
+          </svg>
+        </span>
+        <div>
+          <p class="eyebrow">Fellowship · visión clásica</p>
+          <h1>El Libro de las Hojas</h1>
+        </div>
+      </div>
+      <span class="status-chip" id="health" data-state="pending">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="health-text">consultando el servicio…</span>
+      </span>
+    </div>
+    <p class="lede">Cuaderno de campo de la Comarca para el análisis de superficie de tabaco: color, textura, lesiones y nervaduras medidos con procesamiento de imágenes, sin modelos preentrenados. Cada hoja deja su registro.</p>
+  </header>
+
+  <div class="horizon" aria-hidden="true">
+    <svg viewBox="0 0 1200 168" preserveAspectRatio="xMidYMax slice" focusable="false">
+      <path class="hill hill--far" d="M0 112c120-34 240-38 360-16s240 22 360-4 240-28 360-4 96 18 120 12v68H0Z"/>
+      <path class="hill hill--mid" d="M0 138c140-16 240-10 360 4s220 6 340-10 220-16 320 2 140 14 180 8v26H0Z"/>
+      <path class="hill hill--near" d="M0 154c160-8 300-4 440 2s300 4 440 0 220-4 320-2v14H0Z"/>
+      <path class="door-frame" d="M574 155v-30a26 26 0 0 1 52 0v30Z"/>
+      <path class="door-ring" d="M584 155v-29a16 16 0 0 1 32 0v29"/>
+      <path class="door-step" d="M566 155h68"/>
+      <circle class="door-knob" cx="606" cy="134" r="2.4"/>
+    </svg>
+  </div>
+
+  <main class="layout" id="contenido">
+    <div class="column">
+      <section class="panel deposit" aria-labelledby="deposit-title">
+        <header class="panel-head">
+          <p class="eyebrow">En la mesa</p>
+          <h2 id="deposit-title">Depósito</h2>
+        </header>
+
+        <div class="dropzone" id="dropzone">
+          <span class="dropzone-seal" aria-hidden="true">
+            <svg viewBox="0 0 64 64" focusable="false">
+              <path d="M32 54V30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M32 41c-9 1-15-4-17-12 9-1 15 4 17 12Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M32 35c9 1 15-4 17-12-9-1-15 4-17 12Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M16 54h32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <p class="dropzone-title" id="drop-title">Una hoja por vez</p>
+          <p class="dropzone-hint" id="drop-hint">PNG o JPEG · la imagen se analiza en este equipo y queda en el archivo local.</p>
+          <button class="button button--primary" type="button" id="pick">Elegir imagen</button>
+          <input class="visually-hidden" id="file-input" type="file" accept="image/png,image/jpeg" tabindex="-1" aria-label="Elegir una imagen PNG o JPEG">
+        </div>
+
+        <div class="alert" id="alert" role="alert" hidden>
+          <strong>No se pudo completar.</strong>
+          <span id="alert-message"></span>
+        </div>
+        <p class="status-line" id="status" role="status" aria-live="polite" hidden>
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-text">Analizando la hoja…</span>
+        </p>
+        <p class="visually-hidden" id="live" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="panel result" id="result" aria-labelledby="result-title" hidden>
+        <header class="panel-head panel-head--split">
+          <div class="result-heading">
+            <p class="eyebrow">La inspección</p>
+            <h2 id="result-title">Resultado</h2>
+            <p class="result-meta" id="result-meta"></p>
+          </div>
+          <div class="seal seal--ok" id="seal">
+            <span class="seal-word" id="seal-word">Analizable</span>
+            <span class="seal-sub">calidad</span>
+          </div>
+        </header>
+
+        <p class="verdict-note" id="verdict-note"></p>
+
+        <h3 class="section-title">Medidas</h3>
+        <div class="metrics" id="metrics"></div>
+
+        <figure class="figure">
+          <div class="figure-frame">
+            <img id="overlay" alt="" loading="lazy">
+          </div>
+          <figcaption>
+            <span>Overlay de máscaras</span>
+            <span class="legend">
+              <span class="legend-item"><i class="swatch swatch--lesion" aria-hidden="true"></i>lesión</span>
+              <span class="legend-item"><i class="swatch swatch--vein" aria-hidden="true"></i>nervadura</span>
+            </span>
+          </figcaption>
+        </figure>
+
+        <details class="trace">
+          <summary>Procedencia y parámetros</summary>
+          <pre class="trace-json" id="trace-json"></pre>
+        </details>
+
+        <footer class="result-actions">
+          <a class="button button--ghost" id="original-link" href="#" target="_blank" rel="noopener">Ver original</a>
+          <button class="button button--danger" type="button" id="delete-current">Eliminar esta inspección</button>
+        </footer>
+      </section>
+    </div>
+
+    <aside class="column column--aside">
+      <section class="panel ledger" aria-labelledby="ledger-title">
+        <header class="panel-head panel-head--split">
+          <div>
+            <p class="eyebrow">Almanaque</p>
+            <h2 id="ledger-title">Archivo</h2>
+          </div>
+          <div class="panel-tools">
+            <button class="icon-button icon-button--strong" type="button" id="report-open">Informe</button>
+            <button class="icon-button" type="button" id="refresh">Actualizar</button>
+            <button class="icon-button icon-button--danger" type="button" id="clear-archive" disabled>Limpiar</button>
+          </div>
+        </header>
+        <p class="ledger-count" id="ledger-count">—</p>
+        <ol class="ledger-list" id="ledger-list"></ol>
+        <p class="empty" id="ledger-empty">La huerta espera su primera hoja.</p>
+      </section>
+
+      <section class="panel notes" aria-labelledby="notes-title">
+        <h2 class="section-title" id="notes-title">Cómo leer las medidas</h2>
+        <dl class="notes-list">
+          <div>
+            <dt>Área afectada</dt>
+            <dd>Fracción de la superficie válida marcada como lesión. No es el área de la hoja completa: la imagen es un recorte de superficie.</dd>
+          </div>
+          <div>
+            <dt>Feret máximo</dt>
+            <dd>Diagonal del rectángulo mínimo de la lesión más grande, en píxeles.</dd>
+          </div>
+          <div>
+            <dt>Sin escala física</dt>
+            <dd>Sin patrón de referencia no hay milímetros: solo píxeles, fracciones y grados.</dd>
+          </div>
+        </dl>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="site-footer">
+    <div class="rule" aria-hidden="true"><span></span></div>
+    <p>Fellowship · OpenCV + NumPy + SciPy · sin aprendizaje profundo</p>
+    <p class="footer-note">La luz primero: si el ornamento compite con el dato, sobra.</p>
+  </footer>
+
+  <dialog class="dialog" id="confirm-delete" aria-labelledby="confirm-title">
+    <form method="dialog">
+      <p class="eyebrow">Confirmación</p>
+      <h2 id="confirm-title">¿Eliminar esta inspección?</h2>
+      <p id="confirm-text">Se borran el original, el resultado y las medidas. No se puede deshacer.</p>
+      <div class="dialog-actions">
+        <button class="button button--ghost" value="cancel">Cancelar</button>
+        <button class="button button--danger" value="confirm" id="confirm-accept">Eliminar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Informe del lote: una página del almanaque, no un tablero.
+       El JS de Aragorn abre el diálogo con showModal(), pide GET /api/reports/lot
+       y puebla los contenedores. El cierre funciona con el botón Cerrar y con
+       Escape por el formulario method="dialog"; el clic en el backdrop queda
+       como mejora opcional (el diálogo de borrado tampoco lo implementa). -->
+  <dialog class="report-dialog" id="lot-report" aria-labelledby="report-title" aria-describedby="report-subtitle">
+    <form class="report-sheet" method="dialog">
+      <header class="report-head">
+        <div class="report-heading">
+          <p class="eyebrow">Almanaque · Informe del lote</p>
+          <h2 class="report-title" id="report-title">Informe del lote</h2>
+          <p class="report-subtitle" id="report-subtitle">—</p>
+        </div>
+        <div class="report-stamp-wrap">
+          <div class="report-seal" id="report-seal" data-level="sin_datos" role="group" aria-label="Nivel operativo del lote">
+            <span class="report-seal-word" id="report-seal-word">Sin datos</span>
+            <span class="report-seal-sub">nivel operativo</span>
+          </div>
+          <p class="report-warning" id="report-severe" hidden>Hay hojas severas. Revisá el ranking y la tabla antes de decidir.</p>
+        </div>
+        <div class="report-actions">
+          <button class="button button--ghost" type="button" id="report-save" title="Guardar una copia HTML del informe en esta computadora">Guardar</button>
+          <button class="button button--primary" type="button" id="report-print" title="Imprimir o guardar como PDF">Imprimir</button>
+          <button class="button button--ghost" type="submit" id="report-close">Cerrar</button>
+          <p class="report-save-status" id="report-save-status" role="status" aria-live="polite"></p>
+        </div>
+      </header>
+
+      <div class="report-states">
+        <p class="report-state report-state--empty" id="report-empty" hidden>La huerta todavía no tiene hojas para el informe.</p>
+        <p class="report-state report-state--loading" id="report-loading" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Reuniendo las hojas del lote…</span>
+        </p>
+        <div class="report-state report-state--error" id="report-error" role="alert" hidden>
+          <strong>No se pudo armar el informe.</strong>
+          <span id="report-error-text"></span>
+        </div>
+      </div>
+
+      <div class="report-body" id="report-body" hidden>
+        <section class="report-section" aria-labelledby="report-figures-title">
+          <h3 class="report-section-title" id="report-figures-title">Cifras del lote</h3>
+          <div class="report-figures">
+            <article class="report-figure">
+              <p class="report-figure-label">Imágenes aceptadas</p>
+              <p class="report-figure-value" id="report-images">—</p>
+              <p class="report-figure-unit">n · hojas en el archivo</p>
+            </article>
+            <article class="report-figure">
+              <p class="report-figure-label">Lesiones totales</p>
+              <p class="report-figure-value" id="report-lesions">—</p>
+              <p class="report-figure-unit">componentes</p>
+            </article>
+            <article class="report-figure">
+              <p class="report-figure-label">Área afectada mediana</p>
+              <p class="report-figure-value" id="report-area-median">—</p>
+              <p class="report-figure-unit">% de la superficie válida</p>
+            </article>
+            <article class="report-figure report-figure--worst">
+              <p class="report-figure-label">Peor hoja</p>
+              <p class="report-figure-value" id="report-worst-area">—</p>
+              <p class="report-figure-unit">% de la superficie válida</p>
+              <p class="report-figure-name" id="report-worst-name">—</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="report-section" aria-labelledby="report-severity-title">
+          <div class="report-section-head">
+            <h3 class="report-section-title" id="report-severity-title">Distribución por nivel</h3>
+            <p class="report-section-note">Cortes operativos: &lt; 1 % · 1–5 % · 5–15 % · ≥ 15 % de superficie afectada.</p>
+          </div>
+          <div class="report-band" id="report-band" aria-hidden="true">
+            <span class="report-band-seg sev--sano" id="report-band-sano"></span>
+            <span class="report-band-seg sev--leve" id="report-band-leve"></span>
+            <span class="report-band-seg sev--moderado" id="report-band-moderado"></span>
+            <span class="report-band-seg sev--severo" id="report-band-severo"></span>
+          </div>
+          <ol class="severity-stamps" aria-label="Hojas por nivel operativo">
+            <li class="severity-stamp sev--sano">
+              <span class="severity-stamp-strip" aria-hidden="true"></span>
+              <span class="severity-stamp-label">Sano</span>
+              <span class="severity-stamp-count"><span id="report-sev-sano-count">—</span> <span class="severity-stamp-unit">hojas</span></span>
+              <span class="severity-stamp-meta"><span id="report-sev-sano-pct">—</span> del lote · &lt; 1 %</span>
+            </li>
+            <li class="severity-stamp sev--leve">
+              <span class="severity-stamp-strip" aria-hidden="true"></span>
+              <span class="severity-stamp-label">Leve</span>
+              <span class="severity-stamp-count"><span id="report-sev-leve-count">—</span> <span class="severity-stamp-unit">hojas</span></span>
+              <span class="severity-stamp-meta"><span id="report-sev-leve-pct">—</span> del lote · 1–5 %</span>
+            </li>
+            <li class="severity-stamp sev--moderado">
+              <span class="severity-stamp-strip" aria-hidden="true"></span>
+              <span class="severity-stamp-label">Moderado</span>
+              <span class="severity-stamp-count"><span id="report-sev-moderado-count">—</span> <span class="severity-stamp-unit">hojas</span></span>
+              <span class="severity-stamp-meta"><span id="report-sev-moderado-pct">—</span> del lote · 5–15 %</span>
+            </li>
+            <li class="severity-stamp sev--severo">
+              <span class="severity-stamp-strip" aria-hidden="true"></span>
+              <span class="severity-stamp-label">Severo</span>
+              <span class="severity-stamp-count"><span id="report-sev-severo-count">—</span> <span class="severity-stamp-unit">hojas</span></span>
+              <span class="severity-stamp-meta"><span id="report-sev-severo-pct">—</span> del lote · ≥ 15 %</span>
+            </li>
+          </ol>
+        </section>
+
+        <section class="report-section" aria-labelledby="report-histogram-title">
+          <div class="report-section-head">
+            <h3 class="report-section-title" id="report-histogram-title">Área afectada por intervalo</h3>
+            <p class="report-section-note">Cuántas hojas caen en cada tramo de superficie afectada.</p>
+          </div>
+          <figure class="chart-figure">
+            <div class="chart" id="report-histogram" data-chart="histograma" role="img" aria-label="Histograma de hojas por intervalo de área afectada"></div>
+            <figcaption>Eje Y: hojas (n) · Eje X: área afectada (% de la superficie válida).</figcaption>
+          </figure>
+          <details class="report-data">
+            <summary>Ver los datos del histograma</summary>
+            <div class="report-table-wrap">
+              <table class="report-table report-table--data">
+                <caption>Hojas por intervalo de área afectada</caption>
+                <thead>
+                  <tr><th scope="col">Intervalo</th><th scope="col">Hojas</th></tr>
+                </thead>
+                <tbody id="report-histogram-data"></tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <section class="report-section" aria-labelledby="report-scatter-title">
+          <div class="report-section-head">
+            <h3 class="report-section-title" id="report-scatter-title">Perfil de lesiones</h3>
+            <p class="report-section-note">Una hoja por punto: cantidad de lesiones contra superficie afectada.</p>
+          </div>
+          <figure class="chart-figure">
+            <div class="chart" id="report-scatter" data-chart="dispersion" role="img" aria-label="Dispersión de cantidad de lesiones y área afectada por hoja"></div>
+            <figcaption>Eje X: lesiones (componentes) · Eje Y: área afectada (% de la superficie válida).</figcaption>
+          </figure>
+          <ul class="report-legend" aria-label="Símbolos del gráfico de dispersión">
+            <li><svg class="legend-mark legend-mark--sano" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="5"/></svg>Sano</li>
+            <li><svg class="legend-mark legend-mark--leve" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="5"/></svg>Leve</li>
+            <li><svg class="legend-mark legend-mark--moderado" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="5"/></svg>Moderado</li>
+            <li><svg class="legend-mark legend-mark--severo" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M6 1 11 6 6 11 1 6Z"/></svg>Severo (rombo)</li>
+          </ul>
+          <p class="report-section-note report-section-note--tight">El tamaño del punto no codifica el Feret máximo: un punto fijo por hoja. El Feret está en la tabla del lote.</p>
+          <details class="report-data">
+            <summary>Ver los datos del perfil</summary>
+            <div class="report-table-wrap">
+              <table class="report-table report-table--data">
+                <caption>Lesiones y área afectada por hoja</caption>
+                <thead>
+                  <tr><th scope="col">Hoja</th><th scope="col">Lesiones</th><th scope="col">Área</th><th scope="col">Nivel</th></tr>
+                </thead>
+                <tbody id="report-scatter-data"></tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <section class="report-section" aria-labelledby="report-ranking-title">
+          <div class="report-section-head">
+            <h3 class="report-section-title" id="report-ranking-title">Ranking de hojas</h3>
+            <p class="report-section-note">Las hojas con mayor área afectada (hasta cinco).</p>
+          </div>
+          <figure class="chart-figure">
+            <div class="chart chart--ranking" id="report-ranking" data-chart="ranking" role="img" aria-label="Ranking de hojas por área afectada"></div>
+            <figcaption>Eje X: área afectada (% de la superficie válida). Nombre de archivo a la izquierda.</figcaption>
+          </figure>
+          <details class="report-data">
+            <summary>Ver los datos del ranking</summary>
+            <div class="report-table-wrap">
+              <table class="report-table report-table--data">
+                <caption>Hojas con mayor área afectada</caption>
+                <thead>
+                  <tr><th scope="col">Hoja</th><th scope="col">Área</th><th scope="col">Nivel</th></tr>
+                </thead>
+                <tbody id="report-ranking-data"></tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <section class="report-section" aria-labelledby="report-table-title">
+          <div class="report-section-head">
+            <h3 class="report-section-title" id="report-table-title">Tabla del lote</h3>
+            <p class="report-section-note">Cada fila abre su inspección. Lesiones en componentes; área en % de la superficie válida; Feret en px.</p>
+          </div>
+          <div class="report-table-wrap">
+            <table class="report-table report-table--lot">
+              <caption class="visually-hidden">Hojas aceptadas del lote con sus medidas</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Hoja</th>
+                  <th scope="col">Fecha</th>
+                  <th scope="col">Lesiones</th>
+                  <th scope="col">Área (%)</th>
+                  <th scope="col">Feret máx. (px)</th>
+                  <th scope="col">Calidad / aislamiento</th>
+                </tr>
+              </thead>
+              <tbody id="report-rows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="report-section report-section--notes" aria-labelledby="report-notes-title">
+          <h3 class="report-section-title" id="report-notes-title">Notas del lote</h3>
+          <dl class="report-notes">
+            <div>
+              <dt>Advertencias de calidad</dt>
+              <dd><ul class="report-note-list" id="report-quality"></ul></dd>
+            </div>
+            <div>
+              <dt>Método de aislamiento</dt>
+              <dd><ul class="report-note-list" id="report-methods"></ul></dd>
+            </div>
+          </dl>
+          <p class="report-colophon">Cortes operativos, no diagnóstico agronómico. Sin patrón de escala no hay milímetros: el Feret se declara en píxeles.</p>
+          <p class="report-print-note">El Libro de las Hojas · Almanaque · informe del lote</p>
+        </section>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
