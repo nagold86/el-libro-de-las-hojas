@@ -115,9 +115,6 @@ Para republicar, desde la raíz:
 vercel --prod
 ```
 
-El repositorio no está conectado a Vercel: un `git push` no despliega. Si querés
-publicación automática, conectalo desde el panel del proyecto en Vercel.
-
 ## Estado
 
 Esqueleto contract-first completo y verificado con la suite de tests:
@@ -134,5 +131,3 @@ Esqueleto contract-first completo y verificado con la suite de tests:
 - Publicado en Vercel como demo (`/tmp`, 4 MB): subida, informe, artefactos y
   vaciado verificados contra la URL pública, sin errores de consola (ADR-012).
 
-Pendiente: ingesta con manifest y hashes (`data/`), conjunto golden y validación
-por lote de Boromir.
