@@ -4,9 +4,6 @@ Caracterización de hojas de tabaco a partir de imágenes, usando **solo
 procesamiento de imágenes clásico** (OpenCV, NumPy, SciPy, pandas). Sin
 aprendizaje profundo, sin modelos preentrenados.
 
-El proyecto se construye con la arquitectura probada en
-[`tp-2`](tp-2/docs/TEMPLATE-PROYECTO.md): **core puro + API + tests de contrato**.
-
 La identidad visual sigue un sistema propio de inspiración tolkieniana
 (pergamino, tinta y oro), definido en [`docs/DESIGN.md`](docs/DESIGN.md) y
 propiedad del agente de diseño.
