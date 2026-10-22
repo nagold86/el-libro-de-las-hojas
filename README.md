@@ -19,6 +19,7 @@ propiedad del agente de diseño.
 | [`docs/DESIGN.md`](docs/DESIGN.md) | Sistema visual “El Libro de las Hojas”: paleta, tipografía y componentes |
 | [`docs/CONVENCIONES.md`](docs/CONVENCIONES.md) | Idioma, nombres, tests y commits |
 | [`docs/VALIDACION.md`](docs/VALIDACION.md) | Veredictos de Boromir por lote |
+| [`docs/TRASPASO.md`](docs/TRASPASO.md) | Estado al cierre de la sesión: qué hay, dónde y qué sigue |
 
 ## Estructura
 
