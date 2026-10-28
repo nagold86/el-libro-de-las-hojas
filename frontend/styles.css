@@ -723,6 +723,10 @@ figcaption {
   background: var(--data-vein);
 }
 
+.swatch--chlorosis {
+  background: var(--data-chlorosis);
+}
+
 .trace {
   margin-bottom: var(--space-4);
   padding-top: var(--space-3);
@@ -2091,4 +2095,111 @@ figcaption {
   .report-table--lot tr[data-severity="severo"] td:first-child {
     box-shadow: inset var(--border-rail) 0 0 var(--severity-severo);
   }
+}
+
+/* --------------------------------------------- Capas del procesamiento */
+
+.layers {
+  margin-bottom: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: var(--border-1) solid var(--line);
+}
+
+.layers-head {
+  margin-bottom: var(--space-3);
+}
+
+.layers-note {
+  max-width: var(--measure);
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--text-sm);
+}
+
+.layer-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.layer {
+  min-width: 0;
+}
+
+.layer-figure {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--page);
+  border: var(--border-1) solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.layer-frame {
+  display: block;
+  border-bottom: var(--border-1) solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.layer-frame img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: var(--surface-sunken);
+}
+
+.layer-frame:focus-visible {
+  outline: var(--border-2) solid var(--focus);
+  outline-offset: calc(-1 * var(--border-2));
+}
+
+.layer-caption {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-3);
+}
+
+.layer-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.layer-step {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+}
+
+.layer-title {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.layer-text {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.layer-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
 }

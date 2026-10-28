@@ -74,6 +74,7 @@
   --data-lesion: #a63e24;        /* coincide con LESION_RGB de core/render.py */
   --data-lesion-edge: #7a1f14;   /* contorno de lesión en el overlay */
   --data-vein: #c9a227;          /* oro viejo: sobrevive solo como nervadura */
+  --data-chlorosis: #d9a441;    /* miel: coincide con CHLOROSIS_RGB de core/render.py */
   --data-series-1: var(--moss-600);
   --data-series-2: var(--honey-800);
   --data-series-3: var(--clay-700);

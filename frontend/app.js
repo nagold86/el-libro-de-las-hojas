@@ -37,6 +37,8 @@
     verdictNote: document.getElementById("verdict-note"),
     metrics: document.getElementById("metrics"),
     overlay: document.getElementById("overlay"),
+    layers: document.getElementById("layers"),
+    layerList: document.getElementById("layer-list"),
     trace: document.getElementById("trace-json"),
     originalLink: document.getElementById("original-link"),
     deleteCurrent: document.getElementById("delete-current"),
@@ -127,6 +129,13 @@
     primer_plano: "primer plano",
     grabcut: "GrabCut",
     desconocido: "sin registro",
+  };
+  const STAGE_LABELS = {
+    entrada: "entrada",
+    aislamiento: "aislamiento de hoja",
+    preproceso: "preproceso",
+    segmentacion: "segmentación",
+    medicion: "medición",
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
   const reportBandSegments = Object.fromEntries(
@@ -922,14 +931,104 @@ ${clone.innerHTML}
   }
 
   function renderMetrics(record) {
-    els.metrics.replaceChildren(
+    const items = [
       metric("Área afectada", record.lesions.area_fraction, "de la superficie válida", format.pct),
       metric("Lesiones", record.lesions.count, "componentes", format.int),
       metric("Feret máximo", record.lesions.max_feret_px, "px", format.num),
       metric("Circularidad media", record.lesions.mean_circularity, "0 – 1", format.num),
       metric("Nervadura", record.lesions.vein_density, "de la superficie", format.pct),
       metric("Nitidez", record.quality.sharpness, "varianza del laplaciano", format.num)
-    );
+    ];
+    if (record.chlorosis) {
+      // La clorosis es parte de lo afectado, no área nueva: por eso va pegada
+      // al área afectada y no se suma a ella.
+      items.splice(
+        1,
+        0,
+        metric("Clorosis", record.chlorosis.area_fraction, "de la superficie válida", format.pct)
+      );
+    }
+    els.metrics.replaceChildren(...items);
+  }
+
+  function layerCard(step, layer, url) {
+    const item = document.createElement("li");
+    item.className = "layer";
+
+    const figure = document.createElement("figure");
+    figure.className = "layer-figure";
+
+    const frame = document.createElement("a");
+    frame.className = "layer-frame";
+    frame.href = url;
+    frame.target = "_blank";
+    frame.rel = "noopener";
+    frame.title = `Abrir la capa «${layer.title}» a tamaño completo`;
+
+    const image = document.createElement("img");
+    image.src = url;
+    image.alt = `Capa ${step} · ${layer.title}: ${layer.caption}`;
+    image.loading = "lazy";
+    frame.append(image);
+
+    const caption = document.createElement("figcaption");
+    caption.className = "layer-caption";
+
+    const head = document.createElement("p");
+    head.className = "layer-head";
+    const number = document.createElement("span");
+    number.className = "layer-step";
+    number.textContent = String(step).padStart(2, "0");
+    const title = document.createElement("span");
+    title.className = "layer-title";
+    title.textContent = layer.title || "Capa";
+    head.append(number, title);
+
+    const text = document.createElement("p");
+    text.className = "layer-text";
+    text.textContent = layer.caption || "";
+
+    const meta = document.createElement("p");
+    meta.className = "layer-meta";
+    const stage = STAGE_LABELS[layer.stage] || String(layer.stage || "").replaceAll("_", " ");
+    const size =
+      layer.width && layer.height
+        ? `${format.int(layer.width)} × ${format.int(layer.height)} px`
+        : "";
+    meta.textContent = [stage, size].filter(Boolean).join(" · ");
+
+    caption.append(head, text, meta);
+    figure.append(frame, caption);
+    item.append(figure);
+    return item;
+  }
+
+  function renderLayers(record) {
+    const trace = record.trace || {};
+    const specs = Array.isArray(trace.layers) ? trace.layers : [];
+    const urls = record.layer_urls || {};
+    const cards = [
+      layerCard(
+        1,
+        {
+          title: "Imagen de entrada",
+          stage: "entrada",
+          caption:
+            "El archivo tal como se subió, sin recortes ni correcciones. Todo lo que sigue se aplica sobre esta toma.",
+          width: record.image.width,
+          height: record.image.height,
+        },
+        record.original_url
+      ),
+    ];
+
+    specs.forEach((layer) => {
+      const url = urls[layer.key];
+      if (url) cards.push(layerCard(cards.length + 1, layer, url));
+    });
+
+    els.layers.hidden = cards.length <= 1;
+    els.layerList.replaceChildren(...cards);
   }
 
   function markCurrent(id) {
@@ -970,6 +1069,7 @@ ${clone.innerHTML}
     els.overlay.alt =
       `Hoja ${record.image.filename} con ${record.lesions.count} lesiones marcadas en óxido ` +
       "y nervaduras en oro.";
+    renderLayers(record);
     els.trace.textContent = JSON.stringify(record.trace, null, 2);
     els.originalLink.href = record.original_url;
     els.deleteCurrent.dataset.id = record.id;

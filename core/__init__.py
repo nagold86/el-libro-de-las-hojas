@@ -13,6 +13,7 @@ from core.exceptions import (
     UploadTooLarge,
 )
 from core.io import Photo, encode_png, read_photo
+from core.metrics import MaskAgreement, compare_masks
 from core.morphometry import DefectMeasurer, DefectMetrics, Measurer
 from core.orchestrator import InspectionResult, LeafInspector
 from core.pipeline import Pipeline, PipelineSettings, build_pipeline
@@ -21,7 +22,7 @@ from core.quality import QualityGate, QualityReport
 from core.render import render_overlay
 from core.segmentation import LesionSegmenter, SegmentationResult, Segmenter
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "AppearanceMetrics",
@@ -39,6 +40,7 @@ __all__ = [
     "LeafInspector",
     "LeafDomainGate",
     "LesionSegmenter",
+    "MaskAgreement",
     "Measurer",
     "NotALeaf",
     "Photo",
@@ -55,6 +57,7 @@ __all__ = [
     "UploadTooLarge",
     "__version__",
     "build_pipeline",
+    "compare_masks",
     "encode_png",
     "read_photo",
     "render_overlay",

@@ -9,10 +9,30 @@ import pytest
 from core.segmentation import LesionSegmenter, VeinEnhancer
 
 
+class _EveryPixelIsAVein:
+    """Detector de nervaduras que marca todo: sirve para probar el tope por vena."""
+
+    name = "todo_vena"
+
+    def detect(self, image: np.ndarray, valid_mask: np.ndarray):
+        return np.ones(image.shape[:2], dtype=bool), {"vein_fraction": 1.0}
+
+
 def _green(height: int = 200, width: int = 200) -> tuple[np.ndarray, np.ndarray]:
     image = np.zeros((height, width, 3), dtype=np.uint8)
     image[...] = (74, 122, 58)
     return image, np.ones((height, width), dtype=bool)
+
+
+def _spot_with_halo(height: int = 200, width: int = 300, patch_to: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Núcleo oscuro (puntaje +0,25) rodeado de un halo pálido (puntaje −0,055)."""
+    image, valid = _green(height, width)
+    if patch_to:
+        # Zona ancha, no una cresta: así no la intercepta el detector de nervaduras.
+        cv2.rectangle(image, (100, 55), (patch_to, 145), (86, 96, 52), -1)
+    cv2.circle(image, (100, 100), 18, (86, 96, 52), -1)   # halo: no pasa el umbral 0
+    cv2.circle(image, (100, 100), 10, (96, 62, 40), -1)   # núcleo: semilla
+    return image, valid
 
 
 def test_detects_brown_spot_and_ignores_green():
@@ -106,11 +126,84 @@ def test_rejects_invalid_parameters(kwargs):
         LesionSegmenter(**kwargs)
 
 
+def test_rejects_invalid_hysteresis_parameters():
+    for kwargs in (
+        {"hysteresis_fraction": 0.0},
+        {"hysteresis_fraction": 1.5},
+        {"hysteresis_max_growth_px": -1},
+        {"hysteresis_max_growth_px": 65},
+        {"hysteresis_max_drop": 0.0},
+        {"hysteresis_max_drop": 1.0},
+    ):
+        with pytest.raises(ValueError):
+            LesionSegmenter(**kwargs)
+
+
 def test_vein_enhancer_rejects_invalid_kernel():
     with pytest.raises(ValueError):
         VeinEnhancer(kernel_size=4)
     with pytest.raises(ValueError):
         VeinEnhancer(percentile=100.0)
+
+
+def test_hysteresis_recovers_the_pale_halo_around_a_seed():
+    """El halo pálido entra solo si hay semilla: eso es la histéresis."""
+    image, valid = _spot_with_halo()
+
+    plain = LesionSegmenter(hysteresis=False).segment(image, valid)
+    grown = LesionSegmenter().segment(image, valid)
+
+    assert not plain.lesions[100, 115]  # halo a 5 px del núcleo, fuera del umbral 0
+    assert grown.lesions[100, 115]
+    assert np.all(grown.lesions[plain.lesions])  # solo agrega, nunca quita
+    assert grown.params["grown_px"] > 0
+    assert grown.params["lesion_fraction"] > plain.params["lesion_fraction"]
+    assert grown.params["hysteresis_low_threshold"] < grown.params["redness_threshold"]
+
+
+def test_hysteresis_stops_at_the_depth_cap():
+    """La zona pálida es continua hasta 250, pero el crecimiento se corta antes."""
+    image, valid = _spot_with_halo(patch_to=250)
+
+    near = LesionSegmenter(hysteresis_max_growth_px=6).segment(image, valid)
+    far = LesionSegmenter(hysteresis_max_growth_px=40).segment(image, valid)
+
+    assert near.lesions[100, 114]        # dentro del tope de 6 px
+    assert not near.lesions[100, 140]    # 30 px del núcleo: fuera del tope
+    assert far.lesions[100, 140]         # con más tope, la misma zona sí se alcanza
+
+
+def test_hysteresis_never_creates_a_component_without_a_seed():
+    image, valid = _green()
+    cv2.circle(image, (40, 40), 18, (86, 96, 52), -1)  # halo sin núcleo
+
+    result = LesionSegmenter().segment(image, valid)
+
+    assert result.params["components_kept"] == 0
+    assert not result.lesions.any()
+    assert result.params["lesion_fraction"] == 0.0
+
+
+def test_hysteresis_does_not_grow_over_detected_veins():
+    image, valid = _spot_with_halo()
+
+    plain = LesionSegmenter(vein_detector=_EveryPixelIsAVein()).segment(image, valid)
+    grown = LesionSegmenter().segment(image, valid)
+
+    assert not plain.lesions[100, 115]
+    assert grown.lesions[100, 115]  # el mismo pixel, sin nervadura de por medio
+
+
+def test_leaf_without_margin_does_not_grow():
+    """Si el p50 sano ya está sobre el umbral, los dos umbrales coinciden."""
+    image, valid = _green()
+    image[...] = (96, 62, 40)
+
+    result = LesionSegmenter().segment(image, valid)
+
+    assert result.params["healthy_redness_p50"] > 0.0
+    assert result.params["hysteresis_low_threshold"] == result.params["redness_threshold"]
+    assert result.params["grown_px"] == 0
 
 
 def test_rejects_non_rgb_input():

@@ -15,7 +15,7 @@ from app.schemas import InspectionOut
 from app.uploads import read_upload
 from core.io import encode_png
 from core.orchestrator import LeafInspector
-from core.render import render_overlay
+from core.render import render_overlay, to_rgb
 
 router = APIRouter(prefix="/api/inspections", tags=["inspections"])
 
@@ -47,7 +47,9 @@ def create_inspection(request: Request, file: UploadFile = File(...)) -> Inspect
     result = _inspector(request).inspect(upload.photo.image)
     # El overlay se dibuja sobre la imagen analizada: si el aislamiento recortó
     # la hoja, el resultado muestra la hoja sin fondo y las máscaras coinciden.
-    overlay = render_overlay(result.image, result.lesion_mask, result.vein_mask)
+    overlay = render_overlay(
+        result.image, result.lesion_mask, result.vein_mask, chlorosis_mask=result.chlorosis_mask
+    )
 
     payload = {
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -59,11 +61,14 @@ def create_inspection(request: Request, file: UploadFile = File(...)) -> Inspect
         },
         **result.to_dict(),
     }
+    # La traza visual viaja como ficha; los píxeles se guardan aparte.
+    payload["trace"]["layers"] = [layer.to_dict() for layer in result.layers]
 
     record = _repository(request).save(
         encode_png(upload.photo.image),
         encode_png(overlay),
         payload,
+        layers=[(layer.key, encode_png(to_rgb(layer.image))) for layer in result.layers],
     )
     return InspectionOut.model_validate(record)
 

@@ -12,15 +12,18 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from core.exceptions import InspectionNotFound
+from core.layers import LAYER_KEY_PATTERN
 
 logger = logging.getLogger("fellowship.repository")
 
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+LAYER_SUFFIX = "-layer-{key}.png"
 
 
 class InspectionRepository:
@@ -29,14 +32,33 @@ class InspectionRepository:
         self.root.mkdir(parents=True, exist_ok=True)
         self.media_prefix = media_prefix.rstrip("/")
 
-    def save(self, original_png: bytes, result_png: bytes, payload: dict[str, Any]) -> dict[str, Any]:
-        """Guarda original, resultado y metadatos. Devuelve el registro completo."""
+    def save(
+        self,
+        original_png: bytes,
+        result_png: bytes,
+        payload: dict[str, Any],
+        layers: Iterable[tuple[str, bytes]] = (),
+    ) -> dict[str, Any]:
+        """Guarda original, resultado, capas y metadatos. Devuelve el registro.
+
+        Las capas se escriben como PNG sueltos y el registro solo publica su URL:
+        el JSON sigue siendo el punto de commit.
+        """
         record_id = uuid4().hex
+        layer_urls: dict[str, str] = {}
+        for key, png in layers:
+            if not LAYER_KEY_PATTERN.fullmatch(key):
+                raise ValueError(f"Clave de capa inválida: {key!r}.")
+            suffix = LAYER_SUFFIX.format(key=key)
+            self._atomic_write(self._path(record_id, suffix), png)
+            layer_urls[key] = f"{self.media_prefix}/{record_id}{suffix}"
+
         record = {
             **payload,
             "id": record_id,
             "result_url": f"{self.media_prefix}/{record_id}-result.png",
             "original_url": f"{self.media_prefix}/{record_id}-original.png",
+            "layer_urls": layer_urls,
         }
 
         self._atomic_write(self._path(record_id, "-original.png"), original_png)
@@ -74,6 +96,7 @@ class InspectionRepository:
         self.get(record_id)
         for suffix in ("-original.png", "-result.png", ".json"):
             self._path(record_id, suffix).unlink(missing_ok=True)
+        self._remove_layers(record_id)
 
     def clear(self) -> int:
         """Elimina todos los registros y sus artefactos. Devuelve cuántos borró."""
@@ -91,8 +114,13 @@ class InspectionRepository:
                 ".json.tmp",
             ):
                 self._path(record_id, suffix).unlink(missing_ok=True)
+            self._remove_layers(record_id)
             removed += 1
         return removed
+
+    def _remove_layers(self, record_id: str) -> None:
+        for path in self.root.glob(f"{record_id}-layer-*.png*"):
+            path.unlink(missing_ok=True)
 
     def _validate_id(self, record_id: str) -> None:
         if not ID_PATTERN.fullmatch(record_id):

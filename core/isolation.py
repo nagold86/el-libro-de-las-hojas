@@ -18,6 +18,9 @@ from typing import Any
 import cv2
 import numpy as np
 
+from core.layers import Layer
+from core.render import render_mask
+
 
 @dataclass(frozen=True)
 class IsolationReport:
@@ -57,6 +60,8 @@ class IsolationResult:
     image: np.ndarray
     mask: np.ndarray
     report: IsolationReport
+    # Capas visibles de la etapa: prior de color, máscara de hoja y recorte.
+    layers: tuple[Layer, ...] = ()
 
     @property
     def has_leaf(self) -> bool:
@@ -110,6 +115,17 @@ class LeafIsolator:
         prior = _color_prior(small)
         prior_fraction = float(prior.mean())
         components = _count_components(prior)
+        prior_layer = Layer(
+            key="aislamiento_prior",
+            stage="aislamiento",
+            title="Prior de tejido verde",
+            caption=(
+                "Píxeles candidatos por color: exceso de verde > 0,01, saturación "
+                "> 20 y tono HSV entre 15 y 105. Es una pista para separar hoja de "
+                "fondo, no una lesión."
+            ),
+            image=render_mask(_fit(prior, (height, width))),
+        )
 
         # Un primer plano de hoja no requiere separar nada: el fondo ya es
         # marginal y GrabCut podría comerse nervaduras o lesiones claras.
@@ -119,6 +135,7 @@ class LeafIsolator:
                 method="primer_plano",
                 prior_fraction=prior_fraction,
                 components=components,
+                extra_layers=(prior_layer,),
             )
 
         base = _largest_component(prior)
@@ -133,6 +150,7 @@ class LeafIsolator:
                 prior_fraction=prior_fraction,
                 components=components,
                 warnings=("fondo_escaso",),
+                extra_layers=(prior_layer,),
             )
 
         if scale < 1.0:
@@ -153,6 +171,7 @@ class LeafIsolator:
             prior_fraction=prior_fraction,
             components=components,
             warnings=tuple(warnings),
+            extra_layers=(prior_layer,),
         )
 
     def _all_leaf(
@@ -163,6 +182,7 @@ class LeafIsolator:
         prior_fraction: float,
         components: int = 1,
         warnings: tuple[str, ...] = (),
+        extra_layers: tuple[Layer, ...] = (),
     ) -> IsolationResult:
         mask = np.ones(image.shape[:2], dtype=bool)
         return self._crop(
@@ -172,6 +192,7 @@ class LeafIsolator:
             prior_fraction=prior_fraction,
             components=components,
             warnings=warnings,
+            extra_layers=extra_layers,
         )
 
     def _no_leaf(
@@ -202,6 +223,7 @@ class LeafIsolator:
         prior_fraction: float,
         components: int,
         warnings: tuple[str, ...],
+        extra_layers: tuple[Layer, ...] = (),
     ) -> IsolationResult:
         height, width = image.shape[:2]
         ys, xs = np.nonzero(mask)
@@ -226,7 +248,40 @@ class LeafIsolator:
             components=components,
             warnings=warnings,
         )
-        return IsolationResult(image=crop, mask=crop_mask, report=report)
+        layers = list(extra_layers)
+        layers.append(
+            Layer(
+                key="aislamiento_hoja",
+                stage="aislamiento",
+                title="Máscara de hoja",
+                caption=(
+                    "Superficie que el pipeline considera hoja. Verde: se analiza. "
+                    "Papel: fondo descartado de todas las medidas."
+                    if method != "primer_plano"
+                    else "No había fondo que separar: la toma ya es superficie de "
+                    "hoja de borde a borde, así que la máscara cubre todo."
+                ),
+                image=render_mask(crop_mask),
+            )
+        )
+        layers.append(
+            Layer(
+                key="aislamiento_recorte",
+                stage="aislamiento",
+                title="Recorte de la hoja",
+                caption=(
+                    "Lo que ve el resto del pipeline: la hoja recortada, con el "
+                    "fondo en negro y fuera del cálculo."
+                    if method != "primer_plano"
+                    else "No hubo recorte: se conserva la imagen completa para no "
+                    "perder nervaduras ni bordes de mancha."
+                ),
+                image=crop,
+            )
+        )
+        return IsolationResult(
+            image=crop, mask=crop_mask, report=report, layers=tuple(layers)
+        )
 
 
 def _color_prior(image: np.ndarray) -> np.ndarray:
@@ -307,6 +362,13 @@ def _fill_external(mask: np.ndarray) -> np.ndarray:
     if contours:
         cv2.drawContours(filled, contours, -1, 1, thickness=cv2.FILLED)
     return filled
+
+
+def _fit(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Lleva una máscara a la resolución del recorte para poder mostrarla."""
+    if mask.shape[:2] == shape:
+        return mask.astype(np.uint8, copy=False)
+    return cv2.resize(mask.astype(np.uint8), (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
 
 
 def _ellipse(size: int) -> np.ndarray:

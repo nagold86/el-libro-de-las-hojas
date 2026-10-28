@@ -53,6 +53,27 @@ def test_no_temporary_files_are_left_behind(tmp_path: Path):
     assert len(list(repository.root.iterdir())) == 3
 
 
+def test_layer_artifacts_are_saved_and_removed(tmp_path: Path):
+    repository = _repository(tmp_path)
+
+    record = repository.save(
+        b"original",
+        b"result",
+        dict(PAYLOAD),
+        layers=[("preproceso_balance", b"png")],
+    )
+
+    assert record["layer_urls"] == {
+        "preproceso_balance": f"/media/{record['id']}-layer-preproceso_balance.png"
+    }
+    layer_path = repository.root / f"{record['id']}-layer-preproceso_balance.png"
+    assert layer_path.read_bytes() == b"png"
+
+    repository.delete(record["id"])
+
+    assert not layer_path.exists()
+
+
 def test_list_sorts_newest_first(tmp_path: Path):
     repository = _repository(tmp_path)
 

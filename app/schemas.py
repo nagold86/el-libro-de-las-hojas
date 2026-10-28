@@ -63,6 +63,11 @@ class TraceOut(BaseModel):
     # método, bbox, dimensiones y fracciones.
     isolation: dict[str, Any] = Field(default_factory=dict)
     segmentation: dict[str, Any]
+    # Vacío en registros anteriores a la clorosis (ADR-015).
+    chlorosis: dict[str, Any] = Field(default_factory=dict)
+    # Fichas de las capas visuales, en orden de ejecución. Los píxeles viven en
+    # ``layer_urls``; acá solo van key, etapa, título, leyenda y tamaño.
+    layers: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class InspectionOut(BaseModel):
@@ -71,10 +76,14 @@ class InspectionOut(BaseModel):
     image: ImageOut
     quality: QualityOut
     lesions: LesionsOut
+    # Ausente en registros anteriores a ADR-015.
+    chlorosis: LesionsOut | None = None
     appearance: AppearanceOut
     trace: TraceOut
     result_url: str
     original_url: str
+    # PNG por clave de capa. Vacío en registros anteriores a la traza visual.
+    layer_urls: dict[str, str] = Field(default_factory=dict)
 
 
 class LotTotalsOut(BaseModel):

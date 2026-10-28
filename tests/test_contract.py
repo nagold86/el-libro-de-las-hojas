@@ -63,6 +63,21 @@ def test_upload_returns_201_with_contract(client: TestClient, png_bytes: bytes):
     assert original.status_code == 200
 
 
+def test_upload_exposes_the_processing_layers(client: TestClient, png_bytes: bytes):
+    body = _upload(client, png_bytes).json()
+
+    layers = body["trace"]["layers"]
+    assert layers, "La inspección debe publicar su traza visual."
+    assert layers[0]["key"] == "aislamiento_prior"
+    assert layers[-1]["key"] == "clorosis_mascara"
+    assert body["chlorosis"]["area_fraction"] >= 0
+    assert set(body["layer_urls"]) == {layer["key"] for layer in layers}
+
+    first = client.get(body["layer_urls"][layers[0]["key"]])
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "image/png"
+
+
 def test_list_and_get(client: TestClient, png_bytes: bytes):
     created = _upload(client, png_bytes).json()
 
