@@ -40,9 +40,9 @@ a un ADR, se actualiza el ADR.
 
 ## Orden de lectura antes de tocar nada
 
-1. [`README.md`](../README.md) — qué es, cómo correrlo, contrato HTTP.
+1. [`README.md`](../README.md) — qué es, cómo correrlo, mapa de carpetas y contrato HTTP.
 2. [`docs/DECISIONES.md`](DECISIONES.md) — ADRs, la más reciente arriba (hoy
-   ADR-012 en Vercel, ADR-011 vaciado, ADR-010 informe, ADR-009 aislamiento).
+   ADR-015 clorosis, ADR-014 histéresis, ADR-013 dos vistas, ADR-012 Vercel).
 3. [`fellowship/PIPELINE.md`](../fellowship/PIPELINE.md) — recorrido del pedido,
    módulo por módulo, y las reglas que no se negocian.
 4. [`docs/VALIDACION.md`](VALIDACION.md) — qué se midió y con qué `n`.
@@ -58,11 +58,23 @@ a un ADR, se actualiza el ADR.
 
 ## Pendientes conocidos
 
+- **Máscaras del conjunto dorado sin corregir.** Hay 38 candidatas generadas por
+  el detector en `data/golden/masks/` y ninguna corregida por una persona. Hasta
+  que no se corrijan con `sandbox/anotar.py`, el puntaje mide movimiento del
+  detector, no acierto. Empezar por las 16 de calibración y dejar las 22 de test
+  para validar. De las 51 hojas, 13 nunca podrán llevar máscara: el filtro de
+  nitidez las rechaza.
+- **Clorosis: decidir si se resta.** Hoy se reporta al lado del área afectada.
+  Restarla del área de lesión es una decisión de producto, no de método, y
+  necesita el conjunto dorado corregido para no empeorar el reporte.
+- **Deuda de método**: los dos parámetros nuevos de la histéresis (fracción 0,5 y
+  tope de 8 px) están razonados pero no barridos contra máscaras humanas; el tope
+  de píxeles depende de la escala de la imagen, no del tamaño de la lesión; y
+  `min_sharpness` sigue calibrado sobre la vista de presentación.
 - **Escape en el diálogo del informe**: en la ventana headless no cerró; el
   botón «Cerrar» sí. Falta confirmarlo en un navegador real antes de tocar
   código, porque el `<dialog>` nativo ya lo resuelve.
-- Ingesta con manifest y hashes en `data/`; conjunto golden de lesiones para
-  medir IoU; validación por lote de Boromir.
+- **Sin integración continua**: los 159 tests corren solo a mano.
 - Si la demo deja de ser demo: storage persistente y conexión del repo con
   Vercel para publicación automática.
 

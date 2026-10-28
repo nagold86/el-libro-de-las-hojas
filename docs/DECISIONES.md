@@ -6,6 +6,202 @@ por Gandalf y aprobada por quien resulte afectado.
 
 ---
 
+## ADR-015 — La clorosis se mide por ángulo de matiz, no por canales de color
+
+**Contexto.** ADR-014 resolvió el halo pardo, pero la clorosis seguía sin nombre.
+El criterio de lesión es "rojo alcanza al verde", y un tejido amarillo pálido no
+es rojo: el detector lo contaba como parte de la mancha sin poder decir qué era.
+La hoja `IMG_20231015_111757_15`, la clorótica de control, salía con 72,83 % de
+área afectada y sin forma de saber cuánto de eso era pardo y cuánto amarillo.
+
+Se probó primero la diferencia de canales, `(b* − a*) / 255`, y **falló al revés**:
+las hojas sanas de este dataset ya son amarillo-verdosas (`a* ≈ −28`, `b* ≈ 48` →
+0,30) y la clorótica tiene menos croma (`a* ≈ −1`, `b* ≈ 35` → 0,13). Lo que
+cambia no es cuánto amarillo hay, sino **cuánto verde se perdió**, y eso es un
+ángulo, no una diferencia.
+
+**Decisión.** La clorosis es una familia aparte con su propio detector
+(`core/chlorosis.py`), que no toca la máscara de lesión:
+
+- Puntaje `b* / (|a*| + b*)` en Lab sobre la vista canónica (ADR-013). Vale 0,63
+  en tejido verde, 0,97 en tejido amarillo y 0,69 en tejido pardo.
+- Umbral **0,85**, fijo, sin calibración por hoja: el criterio ya es un ángulo y
+  el dataset no lo pide. Se deja declarado en `PipelineSettings`
+  (`chlorosis_hue_threshold`) por si la calibración lo mueve.
+- Croma mínimo 10 para descartar grises, brillos y ruido, donde el ángulo no
+  significa nada.
+- Apertura y cierre 5×5 y área mínima 60 px: la clorosis es una mancha grande y
+  difusa, nunca un píxel suelto.
+- Se mide con el mismo morfómetro que la lesión y viaja como `chlorosis` en el
+  contrato, con su propio bloque en la traza. **No se suma al área afectada.**
+
+**Consecuencia aceptada.** En 63 hojas, el solape mediano entre las dos máscaras
+es del 100 %: el tejido amarillo casi siempre cae dentro de la máscara parda,
+porque el amarillo también tiene algo más de rojo que de verde. La clorosis no es
+"área nueva", es **una parte etiquetada de lo afectado**. Por eso la pantalla la
+muestra pegada al área afectada y no como una cifra que se suma.
+
+**Evidencia.** Calibración sobre 31 hojas (ver `sandbox/calibrar_clorosis.py`):
+mediana 0,646; por encima de 0,85 queda 0,3 % de la superficie en la hoja mediana
+y 3,0 % en el p90; el máximo (21,3 %) es una hoja con necrosis severa, no una
+hoja sana. La control clorótica da 0,906 de mediana y 64,6 % de superficie por
+encima del umbral. De punta a punta (`sandbox/auditar.py`): clorosis mediana
+0,0275 % de la superficie, p90 3,94 %, y en la control 57,98 % con solape 100 %.
+
+**Alternativas descartadas.** (a) Sumar la clorosis al área de lesión: duplicaría
+la superficie afectada en la control. (b) Restarla del área de lesión: dejaría
+una hoja clorótica reportada como sana, que es peor error que el actual.
+(c) Umbral por hoja sobre el percentil del propio puntaje: convertiría el detector
+en un detector de "lo más amarillo de cada hoja" y marcaría manchas en hojas
+perfectamente sanas.
+
+**Reversibilidad.** `chlorosis_hue_threshold` por encima de 1 desactiva la
+familia sin tocar código. La capa, el bloque de contrato y la métrica desaparecen
+juntos si se quita el detector de `build_pipeline`.
+
+**Afecta a.** `core/chlorosis.py` (nuevo), `core/pipeline.py`, `core/orchestrator.py`,
+`core/render.py`, `app/schemas.py`, `app/routers/inspections.py`, `frontend/app.js`,
+`frontend/index.html`, `frontend/tokens.css`, y los tests de orquestador y contrato.
+
+---
+
+## ADR-014 — La máscara se arma con dos umbrales: uno siembra y el otro crece
+
+**Contexto.** ADR-013 dejó la segmentación midiendo la vista canónica y el área de
+lesión cayó de 2,21 % a 0,33 % de mediana. Esa caída no era error sino extensión:
+con el umbral 0 lejos del tejido sano, la máscara tomaba el núcleo oscuro de la
+mancha y dejaba afuera el halo pardo que la rodea. Un único umbral obliga a elegir
+entre marcar el halo pálido o marcar el tejido sano, porque en el histograma las
+dos poblaciones se tocan en las hojas con poco margen.
+
+**Decisión.** `LesionSegmenter` trabaja en dos tiempos.
+
+- **Semillas**: el umbral estricto de siempre (`redness_threshold = 0`) más
+  apertura, cierre y el filtro de área y compacidad. Son los componentes que
+  existen, y siguen siendo la única fuente de manchas.
+- **Crecimiento**: desde cada semilla, dilatación geodésica sobre los píxeles que
+  superan un umbral bajo, con techo de `hysteresis_max_growth_px = 8` píxeles y
+  excluyendo la máscara de nervaduras del detector de venas.
+
+El umbral bajo no es una constante: sale de la distribución de la propia hoja,
+`p50` del puntaje sobre superficie válida, y se ubica una fracción
+(`hysteresis_fraction = 0,5`) del camino hacia el umbral estricto. Un piso
+(`hysteresis_max_drop = 0,15`) impide que una hoja con margen enorme arrastre
+verde al halo. Si la hoja no tiene margen (p50 ≥ umbral), los dos umbrales
+coinciden y no se crece nada. La traza gana la capa `segmentacion_histeresis`,
+que pinta el núcleo en terracota plena y el halo en terracota lavada.
+
+**Consecuencia aceptada.** La máscara vuelve a incluir el halo y la extensión
+sube, pero sigue lejos del sobre-marcado de la vista con balance: **0,60 % de
+mediana contra el techo de 2,21 %**. El crecimiento nunca puede inventar una
+mancha: todo componente crecido está conectado a una semilla, así que el conteo
+de componentes no cambia (348 → 348 sobre 63 hojas).
+
+**Evidencia.** 63 hojas analizables del dataset (17 quedaron fuera de política por
+nitidez), mismo pipeline con histéresis apagada y encendida. Área mediana
+**0,36 % → 0,60 %** (factor **1,35×**, p90 2,16×); p50 sano mediano **−0,143**,
+umbral bajo mediano **−0,071** (exactamente la mitad del camino); el piso de
+−0,15 no se alcanzó en ninguna hoja. Componentes: 348 antes y 348 después, máximo
+por hoja 37 y 37, **0 hojas con más componentes**. Hojas sin lesión: 9 antes y 9
+después. `IMG_20231015_110914_14`: 4 componentes y 0,32 % → 4 y 0,75 % — el halo
+del ampollado vuelve y la nervadura central sigue fuera. `IMG_20231015_111721_8`:
+2 y 0,39 % → 2 y 0,59 % — los pliegues en sombra siguen fuera. La hoja clorótica
+`IMG_20231015_111757_15` tiene p50 +0,053, así que el umbral bajo coincide con el
+estricto y no crece (77,97 % → 78,13 %): el caso degenerado se comporta como se
+declaró.
+
+**Medición contra el conjunto dorado (provisional).** 38 máscaras prellenadas por
+el detector previo: IoU medio 0,750 (peor 0,189), Dice 0,845, precisión 0,618,
+recall 1,000. **No es exactitud**: la referencia es la salida del propio detector
+con histéresis apagada, así que recall 1,000 es una identidad (el crecimiento
+expande) y el IoU mide cuánto se movió, no cuánto acierta. Coincide con la
+inflación medida en el auditor (1/0,75 ≈ 1,33×). El número que falta es el que
+sale de corregir esas 38 máscaras a mano.
+
+**Alternativas descartadas.** Bajar el umbral estricto a un valor fijo negativo:
+reproduce exactamente el problema de ADR-013, porque el valor óptimo depende de
+cada hoja. Umbral bajo por percentil del tejido sano (p95 del sano) sin tope de
+profundidad: sobre una nervadura fina el crecimiento se propaga sin límite,
+porque el canal es continuo. Rellenar huecos por morfología: agranda el radio de
+forma pareja y no distingue halo de vena. Filtrar los componentes después del
+crecimiento: sobra, porque el crecimiento no crea componentes y el filtro ya se
+aplicó a las semillas.
+
+**Reversibilidad.** Alta: `PipelineSettings(hysteresis=False)` reproduce la
+máscara de un solo umbral de ADR-013, y los tres parámetros de crecimiento son
+configuración declarada.
+
+**Afecta a.** Legolas (segmentación), Gimli (la extensión medida sube), Boromir
+(veredicto y conjunto dorado), Aragorn (parámetros declarados), Celebrimbor (capa
+nueva en la traza).
+
+---
+
+## ADR-013 — La imagen que se mide no lleva balance de blancos ni CLAHE
+
+**Contexto.** El usuario reportó que la detección de manchas «no está clara». Una
+auditoría sobre las 210 hojas del dataset (una por hoja, variantes colapsadas)
+mostró que el problema no era el criterio sino el camino hasta él: el balance de
+blancos gray-world de `core/preprocess.py` corregía la imagen que después se
+segmentaba, y en una hoja verde **las 210 hojas tenían al menos una ganancia
+pegada a sus límites** (G en 0,75 y B en 1,33 en la mayoría). Corregir el color
+por el promedio de la escena sube el rojo de todo el tejido: la mediana del
+puntaje `(R − G)/(R + G)` sobre tejido sano pasaba de −0,068 a −0,144 según la
+vista, dejando el umbral 0 a menos de 0,03 de distancia en las peores hojas. El
+CLAHE sobre L hacía lo mismo con el histograma local. El criterio declarado en
+ADR-007 es invariante al brillo global; el preproceso le quitaba esa propiedad.
+
+**Decisión.** `StandardPreprocessor` devuelve dos vistas de la misma hoja:
+
+- `image` — **vista de análisis**: el recorte tal cual, solo con el bilateral
+  suave. Es lo único que entra a la segmentación, la morfometría y los
+  descriptores. Lleva `params["analysis_view"] = "canonica_sin_balance"`.
+- `display` — **vista de presentación**: balance de blancos + CLAHE en luminancia
+  + bilateral, en ese orden. Es la que se muestra y la que juzga la puerta de
+  calidad. Lleva `params["white_balance_applies_to"] = "display"`.
+
+La traza gana una capa, `preproceso_analisis`, que abre la etapa, y las capas de
+balance y contraste pasan a titularse «(visual)» con la explicación de por qué no
+miden. La puerta de calidad sigue leyendo `display` porque `min_sharpness = 15`
+se calibró sobre esa imagen y 27/210 hojas dependen de esa calibración; medirla
+sobre la vista canónica exigiría recalibrar el umbral, que es otra decisión.
+
+**Consecuencia aceptada.** El área de lesión baja: mediana **2,21 % → 0,33 %**,
+p90 **9,79 % → 3,21 %**. No es una pérdida de precisión sino de **extensión**: la
+máscara toma el núcleo oscuro de la mancha y deja fuera el halo parduzco, porque
+el umbral 0 ahora está lejos del tejido sano en vez de rozarlo. `IMG_20231015_110914_14`
+pasa de 16 componentes y 3,30 % a 4 componentes y 0,32 %, y la nervadura central
+que se contaba como lesión desaparece. La recuperación de la extensión le
+corresponde a la histéresis (próxima etapa) y se juzga con IoU, no con área.
+
+**Evidencia.** 210 hojas: mediana del puntaje sano −0,068 → **−0,144**, mínimo
+−0,104 → −0,213. 40 hojas: separación `p99 − p50` **0,092 → 0,112** (+22 %).
+Estabilidad bajo brillo global 0,75: IoU mediana **0,862 → 0,897**, mínimo
+**0,000 → 0,289** (la vista visual perdía la máscara completa en al menos una
+hoja). `IMG_20231015_111721_8`: 36 componentes / 13,14 % → 2 / 0,37 % (marcaba
+pliegues en sombra). La hoja clorótica `IMG_20231015_111757_15` pasa de 55,35 % a
+74,65 %: ambas vistas marcan el tejido no verde, la canónica lo delimita mejor,
+y el criterio sigue sin distinguir clorosis de necrosis.
+
+**Alternativas descartadas.** Quitar el balance de blancos de raíz: la pantalla
+necesita una imagen legible y el balance sigue sirviendo para eso. Recalibrar
+`min_sharpness` sobre la vista canónica en la misma decisión: cambia el veredicto
+de calidad de 27/210 hojas y no hay referencia anotada para justificarlo.
+Normalizar el puntaje por hoja (mediana/MAD) en lugar de sacar el balance: es la
+etapa siguiente y también necesita el conjunto dorado. Dejar `display` como
+vista única y documentar el sesgo: ya estaba documentado en ADR-007 y no se
+cumplía.
+
+**Reversibilidad.** Alta: es una expresión en `StandardPreprocessor.apply` y un
+campo del resultado; `image` y `display` conviven, así que volver a medir sobre
+`display` es cambiar un argumento en tres llamadas del orquestador.
+
+**Afecta a.** Sam (preproceso), Legolas (segmentación), Merry (descriptores,
+que ahora describen la hoja y no la corrección), Boromir (calidad y veredicto),
+Aragorn (orquestación), Celebrimbor (capa nueva en la traza).
+
+---
+
 ## ADR-012 — Demo en Vercel con almacenamiento efímero declarado
 
 **Contexto.** El MVP corría solo en local, con FastAPI y OpenCV sobre el disco

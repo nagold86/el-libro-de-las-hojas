@@ -18,6 +18,118 @@ Formato de cada entrada:
 
 ---
 
+## 2026-10-28 — clorosis por ángulo de matiz (ADR-015)
+
+- n: calibración del puntaje sobre 31 hojas sanas más 2 controles (clorótica y
+  necrosis); de punta a punta, 63 hojas analizables de las primeras 80 por hoja
+  física (las mismas 17 fuera de política por nitidez). `sandbox/auditar.py`.
+- Separación del criterio: mediana del ángulo **0,646** en hojas sanas; por encima
+  de 0,85 queda **0,3 %** de superficie en la hoja mediana, p90 3,0 %, máximo
+  21,3 % (una hoja con necrosis severa, no una sana). La control clorótica da
+  **0,906** de mediana y 64,6 % de su superficie sobre el umbral.
+- Extensión medida: clorosis mediana **0,0275 %** de la superficie, p90 3,94 %,
+  máximo (control) **57,98 %**. La hoja clorótica queda con 72,99 % de área
+  afectada y la clorosis explica 58 de esos puntos.
+- Solape con la máscara parda: mediana **100 %**. La clorosis no agrega área, la
+  etiqueta: por eso el reporte la muestra al lado del área afectada y no sumada.
+- Riesgo vigilado (hojas sanas marcadas): 3 hojas por encima del 10 % (10,70 %,
+  29,36 %, 29,28 %), y las tres ya venían con **≥ 17 %** de área parda reportada.
+  No apareció ninguna hoja limpia marcada.
+- Repetibilidad: dos inspecciones de la misma hoja dan la misma máscara
+  (sha256 idéntico) y la misma área; 0,5798 en la control, 0,00055 en
+  `110914_14`, 0,02282 en `110302_8`. La traza pasa a **17 capas**.
+- Costo: **≈ 0,37 s por hoja** en el pipeline completo (una pasada, sin las dos
+  ramas de la auditoría; dos corridas dieron 360 y 381 ms).
+- Fuga de datos: el umbral 0,85 se eligió mirando hojas del mismo dataset
+  (incluida la control), así que **no es un valor validado en un conjunto
+  separado**. Está declarado en el ADR y en `PipelineSettings`.
+- Fallos: ninguna excepción nueva; las 17 hojas siguen fuera por nitidez
+  (`min_sharpness = 15`).
+- Veredicto: **APTO con condiciones**. (1) La clorosis no cambia el área
+  reportada como lesión: decidir si debe restarse es una decisión pendiente, no
+  un efecto de este cambio. (2) Falta la máscara humana del conjunto dorado para
+  hablar de exactitud; hoy todo lo medido es coherencia interna.
+
+---
+
+## 2026-10-28 — histéresis de dos umbrales (ADR-014)
+
+- n: 63 hojas analizables de las primeras 80 por hoja física (17 quedaron fuera de
+  política por nitidez, sharpness 5,8–12,9 contra `min_sharpness = 15`); mismo
+  pipeline dos veces por hoja, histéresis apagada y encendida. Más 38 archivos del
+  conjunto dorado puntuados contra máscaras prellenadas.
+- IoU de lesión: **no declarado como exactitud**. `golden.py score` da IoU medio
+  **0,750** (peor 0,189), Dice 0,845, precisión 0,618, recall 1,000, pero la
+  referencia son las máscaras que prellenó el detector previo: el recall 1,000 es
+  una identidad (el crecimiento expande, nunca quita) y el IoU mide desplazamiento,
+  no acierto. Ninguna de las 38 máscaras está corregida por una persona todavía.
+- Extensión: área mediana **0,36 % → 0,60 %** (factor 1,35×; p90 2,16×; máximo
+  5,29× en una hoja de 0,02 %). Sigue 0,27× del techo de la vista con balance
+  (2,21 %): no se volvió al sobre-marcado de ADR-012 y anteriores.
+- Contención: componentes 348 → 348 sobre las 63 hojas, máximo por hoja 37 → 37,
+  **0 hojas con más componentes** y 9 hojas sin lesión antes y después. El
+  crecimiento no puede inventar una mancha porque todo pixel agregado está
+  conectado a una semilla.
+- Umbral bajo: p50 sano mediano **−0,143**, umbral bajo mediano **−0,071**; el piso
+  de −0,15 no se alcanzó en ninguna hoja. Caso degenerado: la hoja clorótica
+  `IMG_20231015_111757_15` tiene p50 positivo, los dos umbrales coinciden y no
+  crece nada (77,97 % → 78,13 %, p50 +0,053).
+- Repetibilidad: dos corridas sobre `IMG_20231015_110914_14` dan máscara idéntica,
+  área 0,007529, 4 componentes, 15 capas y 15 imágenes iguales pixel a pixel.
+  Umbral bajo −0,0668 con p50 sano −0,1336; 2 601 px agregados.
+- Casos: `IMG_20231015_110914_14` 4 componentes / 0,32 % → 4 / 0,75 % (vuelve el
+  halo del ampollado, la nervadura central sigue fuera); `IMG_20231015_111721_8`
+  2 / 0,39 % → 2 / 0,59 % (los pliegues en sombra siguen fuera).
+- Fuga de datos: ninguna. Las máscaras prellenadas salen del mismo pipeline que se
+  evalúa, por eso se informan como `auto` en `_provenance.json` y no se declaran
+  como referencia.
+- Fallos declarados: el techo de 8 px es un parámetro de escala —a 1100 px de lado
+  máximo— y no se adapta al tamaño de la mancha; con manchas de diámetro menor a
+  ~16 px el halo puede quedar afuera. La histéresis tampoco separa clorosis de
+  necrosis.
+- Veredicto: **APTO** para la contención y la reversibilidad (componentes, hojas
+  sin lesión y caso degenerado se comportan como se declaró). **NO APTO** para
+  declarar mejor segmentación: falta que una persona corrija las 38 máscaras y que
+  el IoU se mida contra esa referencia.
+
+---
+
+## 2026-10-28 — vista de análisis canónica (ADR-013)
+
+- n: 210 hojas, una por hoja; variantes colapsadas por nombre físico y archivos
+  duplicados descartados por sha256. Segunda pasada de 40 hojas para estabilidad
+  fotométrica, mismas hojas en ambas vistas.
+- IoU de lesión: **no declarado**. El conjunto dorado quedó muestreado (40 hojas
+  físicas, 51 archivos, 22 calibración / 29 test) pero sin máscaras anotadas:
+  `golden.py score` informa 51 hojas esperando anotación. Sin esa referencia no
+  se puede afirmar que la segmentación mejoró, solo que se movió.
+- Estabilidad fotométrica, mismo contenido con brillo 0,75: IoU entre máscaras
+  mediana **0,897** (peor 0,289) con la vista canónica contra **0,862** (peor
+  0,000) con la visual. La vista visual perdía la máscara completa en al menos
+  una hoja; la canónica nunca bajó de 0,289.
+- Separación tejido sano / cola de lesión (`p99 − p50` del puntaje): 0,092 →
+  **0,112** (+22 %). Mediana del puntaje sobre tejido sano: −0,068 → **−0,144**.
+- Área de lesión: mediana **2,21 % → 0,33 %**, p90 9,79 % → 3,21 %, máximo
+  53,05 % → 67,66 %; hojas por encima de 20 %: 5 → 3.
+- Casos: `IMG_20231015_110914_14` 16 componentes / 3,30 % → 4 / 0,32 % y la
+  nervadura central deja de contarse como lesión; `IMG_20231015_111721_8`
+  36 / 13,14 % → 2 / 0,37 % (marcaba pliegues en sombra);
+  `IMG_20231015_111757_15` (clorótica) 55,35 % → 74,65 %.
+- Repetibilidad: dos inspecciones de la misma hoja dan máscara idéntica, área
+  idéntica (0,003239), mismo conteo (4) y las 14 capas iguales píxel a píxel.
+  Ninguna etapa nueva usa azar.
+- Fuga de datos: ninguna. El muestreo descarta 48 archivos duplicados por sha256
+  antes de repartir y separa calibración/test por hash del nombre de la hoja, no
+  por archivo, para que dos variantes no caigan en lados distintos.
+- Fallos: la extensión de la mancha se subestima cuando el halo es pálido (el
+  umbral toma el núcleo); la hoja clorótica sigue sin poder separarse por color
+  porque todo su tejido sano es amarillo. Ambas son limitaciones declaradas.
+- Veredicto: **APTO con reserva** para avanzar a histéresis, **NO APTO** para
+  declarar mejora de segmentación. La reserva se levanta cuando `golden.py
+  score` tenga n ≥ 30 con máscaras y declare IoU medio y peor caso.
+
+---
+
 ## 2026-10-21 — producción en Vercel (demo efímera)
 
 - n: 1 hoja externa (primer plano USDA ARS, 880×1085) subida contra la URL
