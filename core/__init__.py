@@ -22,7 +22,7 @@ from core.quality import QualityGate, QualityReport
 from core.render import render_overlay
 from core.segmentation import LesionSegmenter, SegmentationResult, Segmenter
 
-__version__ = "2.0.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "AppearanceMetrics",
