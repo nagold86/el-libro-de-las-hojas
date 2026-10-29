@@ -18,6 +18,141 @@ Formato de cada entrada:
 
 ---
 
+## 2026-10-29 — alcance por dueño y conserjería (ADR-018)
+
+- n: 11 casos HTTP nuevos en `tests/test_scope.py` (dos cuentas reales sobre
+  `fellowship_test`: un `admin` y un `operador` creado en el momento) más 10 casos
+  de store y repositorio. Suite completa: `python -m pytest` → **282 pasan, 0
+  salteados** (44,2 s). Los 261 anteriores siguen verdes: el alcance no cambió
+  ninguna medición.
+- Aislamiento: el `operador` ve solo sus hojas aunque mande `owner` ajeno (el
+  parámetro se ignora), pide una hoja de otro y recibe **404
+  `INSPECTION_NOT_FOUND`** —el mismo de un id inexistente—, y lo mismo pasa con
+  el PNG en `/media`. El `admin` abre las dos. El informe del lote suma 1 hoja
+  para el operador y 2 para el administrador, y `DELETE /api/inspections` deja
+  solo la hoja del compañero.
+- Baja de usuario: `DELETE /api/auth/users/{id}` → **204**; la lista del `admin`
+  vuelve con una sola cuenta, el login del dado de baja responde **401
+  `CREDENCIALES_INVALIDAS`** y sus hojas aparecen en
+  `GET /api/inspections?unassigned=true`. La purga de huérfanas las borra sin
+  tocar la hoja del `admin`. La cuenta propia no se puede dar de baja (**403
+  `SIN_PERMISO`**) y un id desconocido responde **404
+  `USUARIO_NO_ENCONTRADO`**. Un `operador` recibe 403 en listar, crear y borrar
+  usuarios, y `unassigned=true` le devuelve la lista vacía.
+- Divergencia documentada: «sin dueño» no significa lo mismo en las dos
+  persistencias. En archivos solo es huérfana la hoja que nunca tuvo `owner` en el
+  payload; en Postgres también la que quedó con `user_id` en NULL por una baja
+  (`ON DELETE SET NULL`). El contrato compartido
+  (`tests/test_store_contract.py`) prueba el caso común y cada repositorio cubre
+  su matiz, para que el comportamiento quede escrito y no como sorpresa.
+- Repetibilidad: el detector no se tocó en este lote (huella `7fb35e2d`); el
+  alcance filtra filas, no medidas, así que una hoja sigue midiendo lo mismo para
+  su dueño y para el administrador.
+- Fuga de datos: ninguna; ADR-018 no agrega rasgos ni umbrales, solo recorta qué
+  filas ve cada cuenta. El `404` en lo ajeno es deliberado: un `403` confirmaría
+  que la hoja existe.
+- Recorrido en vivo: `sandbox/verificar_scope.py` contra `uvicorn` en el puerto
+  8765 y la base `fellowship` → **37 de 37** comprobaciones en verde, con un
+  operador `probe_scope` de usar y tirar. Al final la base quedó como estaba:
+  una cuenta (`nico`) y dos hojas.
+- Sin verificar todavía: el recorrido visual de la conserjería (botón
+  **Usuarios**, alta, baja, «Borrar hojas sin dueño» y la opción «sin dueño» del
+  filtro). El JS pasa `node --check` y todos los `id` que usa `getElementById`
+  existen en `index.html`, pero el diálogo no se abrió en un navegador real.
+- Veredicto: **APTO**; queda como pendiente el recorrido en navegador, ya
+  declarado en [`TRASPASO.md`](TRASPASO.md).
+
+---
+
+## 2026-10-29 — login, historial y versiones en Postgres (ADR-017)
+
+- n: 1 hoja del dataset (`A_IMG_20231014_162623_10`) para el recorrido de punta a
+  punta; suite completa con Postgres levantado. `python -m pytest` → **261 pasan,
+  0 salteados** (36,6 s), sobre `fellowship_test`. El recorrido es
+  `sandbox/verificar_auth.py` contra `uvicorn` en el puerto 8767: 20 de 20
+  comprobaciones en verde.
+- Credenciales: la verificación corrió contra la base de prueba, con un
+  administrador `nico` de usar y tirar. En la base `fellowship` solo se aplicó el
+  esquema (ya estaba al día): no se creó ningún usuario ni se escribió ninguna
+  hoja, así que no queda una clave inventada. `FELLOWSHIP_ADMIN_USER` y
+  `FELLOWSHIP_ADMIN_PASSWORD` las define quien levante el servidor.
+- Migraciones: se borraron las cuatro tablas y `python -m app.db.migrate` aplicó
+  `001_init` y `002_users_and_versions`; **un proceso distinto** lista después
+  `inspections`, `schema_migrations`, `software_versions` y `users`. Confirma el
+  arreglo del guardado implícito (el DDL ya sobrevive al cierre de la conexión) y
+  deja cerrado el pendiente de verificación real del 2026-10-28.
+- Persistencia entre procesos: una hoja subida por el servidor viejo
+  (`af22e69f`, dueña `nico`, `app_version` 0.2.0, huella de método `7fb35e2d`)
+  reaparece en el servidor reiniciado como única hoja del almanaque, con el
+  original servido desde la base (**593.837 B**). El overlay regenerado en frío
+  llega por `/media` con **601.699 B**. Vaciar el almanaque después lo deja en 0.
+- Puerta: sin sesión, `/api/inspections` y `/media/...` responden **401**
+  (`NO_AUTENTICADO`), `/api/health` sigue abierto; clave equivocada → **401**
+  `CREDENCIALES_INVALIDAS`; alta de usuario repetida → **409**
+  `USUARIO_EXISTENTE`; `logout` → **204** y el historial vuelve a 401. Cookie
+  manipulada y operador pidiendo alta de usuarios quedan cubiertos en
+  `tests/test_auth.py`.
+- Historial: filtros por nombre (`q`), dueño y versión devuelven 1 hoja cada uno;
+  una versión sin hojas devuelve la lista vacía y `GET /api/versions` resume
+  `0.2.0` con 1 hoja. El mismo contrato se prueba contra archivos y contra
+  Postgres (`tests/test_store_contract.py`, 42 casos).
+- Fallos encontrados y corregidos en el camino: la cookie salía `Secure` en
+  cualquier entorno y por `http` el cliente la descartaba (11 tests de `/media`
+  daban 401); el `INSERT` rompía con `ForeignKeyViolation` si el dueño ya no
+  existía (ahora `user_id` se resuelve con una subconsulta y queda `NULL`); el
+  guardián de columnas del `.sql` no reconocía `ADD COLUMN IF NOT EXISTS`; y un
+  test de guardas apuntaba a `/api/reports` en vez de `/api/reports/lot`.
+- Repetibilidad: `LeafInspector().inspect()` sobre el original guardado produce
+  la capa **idéntica byte a byte** a la servida desde la base (`tests/test_media.py`);
+  el detector no cambió de versión en este lote (`7fb35e2d`).
+- Fuga de datos: ninguna; ADR-017 solo agrega metadatos (dueño y versión), ningún
+  rasgo ni umbral nuevo sobre las hojas.
+- Sin verificar todavía: el recorrido visual en navegador de la puerta, los
+  filtros y el sello de versión. El JS pasó `node --check` y la API está verificada
+  de punta a punta, así que el riesgo está en la maqueta, no en los datos.
+- Veredicto: **APTO**; el pendiente del 2026-10-28 sobre el camino de base queda
+  cerrado.
+
+---
+
+## 2026-10-28 — registro en Postgres y capas regeneradas (ADR-016)
+
+- n: 1 hoja del dataset (`A_IMG_20231014_162623_10`) para el costo de
+  regeneración; suite completa (184 pasan, 36 salteados) para lo demás.
+  `sandbox/medir_regeneracion.py` y `python -m pytest`.
+- Qué se guarda: el original (**580 KB**) y el payload; el overlay y las 17 capas
+  (**4,3 MB**) no se guardan. El registro completo habría sido ≈ 4,8 MB.
+- Costo de regenerar: **0,90 s** en frío (0,988 / 0,901 / 0,900 en tres corridas)
+  para las 18 imágenes, y **0,004 ms** la segunda vista desde la caché. En modo
+  archivos no se regenera: `/media` sigue siendo `StaticFiles` sobre el disco.
+- Repetibilidad: la capa servida es **idéntica byte a byte** a la que produce
+  `LeafInspector().inspect()` sobre el original guardado (`tests/test_media.py`),
+  que es lo que hace aceptable no guardar los PNG.
+- Contrato: mismas URLs y mismos campos que antes. Agregados: `method_versions`
+  en el informe del lote y `database` en `/api/health`.
+- Cableado verificado sin servidor (`sandbox/verificar_cableado.py`):
+  `/api/health` responde `archivos` sin DSN (0,12 s) y `sin conexión` con un DSN
+  caído (2,1 s, el tope del ping de salud); `python -m app.db.migrate` sale con 2
+  y un mensaje si falta `DATABASE_URL`, y con 1 y el error del driver si el
+  servidor no responde, nunca con un traceback.
+- Fuga de datos: ninguna; no hay ninguna métrica nueva del pipeline.
+- Modo archivos de punta a punta contra la app real (`uvicorn`, puerto 8765):
+  subida de una hoja nueva → 17 capas publicadas, overlay (607 KB) y capa
+  (3,8 KB) servidos desde el disco, y el informe marca la huella `46838de8` para
+  la nueva contra `sin_huella` en los 4 registros viejos. Borrar ese registro
+  devolvió el almanaque a 4.
+- **Pendiente de verificación real.** Esta máquina no tiene Docker, ni Postgres,
+  ni WSL operativo, así que el camino de base **no se ejecutó**: los 36 tests de
+  Postgres se saltean con el mensaje de cómo levantar la base. Sin servidor se
+  cuidan el esquema y el `INSERT` (columnas del `.sql`, placeholders y aridad de
+  `_columns`). Falta, en una máquina con Docker: `docker compose up -d`,
+  `python -m app.db.migrate`, correr la suite sin *skip* y hacer la prueba de
+  persistencia tras reiniciar el proceso (criterio 3 del plan).
+- Veredicto: **APTO en modo archivos** (no cambia comportamiento); **PENDIENTE**
+  en modo base hasta poder levantarla.
+
+---
+
 ## 2026-10-28 — clorosis por ángulo de matiz (ADR-015)
 
 - n: calibración del puntaje sobre 31 hojas sanas más 2 controles (clorótica y

@@ -31,10 +31,22 @@
           <h1>El Libro de las Hojas</h1>
         </div>
       </div>
-      <span class="status-chip" id="health" data-state="pending">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span id="health-text">consultando el servicio…</span>
-      </span>
+      <div class="masthead-meta">
+        <!-- Quién está en sesión (ADR-017). Sin base no hay usuarios y no se muestra. -->
+        <span class="session" id="session" hidden>
+          <span class="session-who">
+            <span class="session-name" id="session-name">—</span>
+            <span class="session-role" id="session-role"></span>
+          </span>
+          <!-- Solo el administrador administra cuentas (ADR-018). -->
+          <button class="icon-button" type="button" id="users-open" hidden>Usuarios</button>
+          <button class="icon-button" type="button" id="logout">Salir</button>
+        </span>
+        <span class="status-chip" id="health" data-state="pending">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="health-text">consultando el servicio…</span>
+        </span>
+      </div>
     </div>
     <p class="lede">Cuaderno de campo de la Comarca para el análisis de superficie de tabaco: color, textura, lesiones y nervaduras medidos con procesamiento de imágenes, sin modelos preentrenados. Cada hoja deja su registro.</p>
   </header>
@@ -150,9 +162,29 @@
             <button class="icon-button icon-button--danger" type="button" id="clear-archive" disabled>Limpiar</button>
           </div>
         </header>
+        <!-- Filtros del historial (ADR-017): versión, quién y nombre de archivo. -->
+        <div class="ledger-filters" id="ledger-filters">
+          <label class="field field--search">
+            <span class="field-label">Buscar</span>
+            <input type="search" id="filter-q" placeholder="nombre de archivo" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="field">
+            <span class="field-label">Versión</span>
+            <select id="filter-version">
+              <option value="">todas</option>
+            </select>
+          </label>
+          <label class="field" id="filter-owner-field">
+            <span class="field-label">Quién</span>
+            <select id="filter-owner">
+              <option value="">todos</option>
+            </select>
+          </label>
+        </div>
         <p class="ledger-count" id="ledger-count">—</p>
         <ol class="ledger-list" id="ledger-list"></ol>
         <p class="empty" id="ledger-empty">La huerta espera su primera hoja.</p>
+        <button class="button button--ghost ledger-more" type="button" id="ledger-more" hidden>Cargar más hojas</button>
       </section>
 
       <section class="panel notes" aria-labelledby="notes-title">
@@ -414,6 +446,69 @@
           <p class="report-colophon">Cortes operativos, no diagnóstico agronómico. Sin patrón de escala no hay milímetros: el Feret se declara en píxeles.</p>
           <p class="report-print-note">El Libro de las Hojas · Almanaque · informe del lote</p>
         </section>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- La conserjería (ADR-018): alta y baja de usuarios, y la limpieza de las
+       hojas que quedaron sin dueño. Solo la abre el administrador. -->
+  <dialog class="dialog users" id="users" aria-labelledby="users-title">
+    <p class="eyebrow">La conserjería</p>
+    <h2 id="users-title">Usuarios</h2>
+    <p class="users-note">Cada operador ve solo sus hojas. Dar de baja una cuenta deja su archivo en el almanaque, sin dueño.</p>
+    <ul class="users-list" id="users-list"></ul>
+    <p class="login-error" id="users-error" role="alert" hidden></p>
+    <form class="users-form" id="user-form">
+      <p class="users-form-title">Agregar usuario</p>
+      <div class="users-fields">
+        <label class="field">
+          <span class="field-label">Usuario</span>
+          <input id="user-username" name="username" type="text" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">
+          <span class="field-label">Nombre</span>
+          <input id="user-display" name="display_name" type="text" maxlength="80" autocomplete="off">
+        </label>
+        <label class="field">
+          <span class="field-label">Contraseña</span>
+          <input id="user-password" name="password" type="password" required minlength="8" maxlength="256" autocomplete="new-password">
+        </label>
+        <label class="field">
+          <span class="field-label">Rol</span>
+          <select id="user-role" name="role">
+            <option value="operador">operador</option>
+            <option value="admin">administrador</option>
+          </select>
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button class="button button--primary" type="submit" id="user-submit">Agregar usuario</button>
+      </div>
+    </form>
+    <div class="users-footer">
+      <button class="button button--danger" type="button" id="clear-orphans">Borrar hojas sin dueño</button>
+      <button class="button button--ghost" type="button" id="users-close">Cerrar</button>
+    </div>
+  </dialog>
+
+  <!-- La puerta (ADR-017): con base configurada el archivo no se lee ni se escribe
+       sin sesión. Sin base no hay usuarios y este diálogo nunca se abre. -->
+  <dialog class="dialog login" id="login" aria-labelledby="login-title">
+    <form id="login-form" method="dialog">
+      <p class="eyebrow">La puerta</p>
+      <h2 id="login-title">Entrar al Libro</h2>
+      <p>El archivo vive en la base del almanaque: hace falta un usuario para leerlo y para dejar una hoja.</p>
+      <label class="field">
+        <span class="field-label">Usuario</span>
+        <input id="login-user" name="username" type="text" autocomplete="username" required maxlength="32" spellcheck="false">
+      </label>
+      <label class="field">
+        <span class="field-label">Contraseña</span>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="256">
+      </label>
+      <p class="login-error" id="login-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button class="button button--primary" type="submit" id="login-submit">Entrar</button>
       </div>
     </form>
   </dialog>

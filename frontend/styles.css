@@ -97,6 +97,15 @@ input {
   flex-wrap: wrap;
 }
 
+/* Estado del servicio y quién está en sesión, a la derecha del membrete. */
+.masthead-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -175,6 +184,37 @@ h1 {
 .status-chip[data-state="down"] {
   color: var(--danger);
   border-color: currentColor;
+}
+
+/* Ficha de sesión: quién está adentro y por dónde se sale (ADR-017). */
+.session {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  border: var(--border-1) solid var(--moss-300);
+  border-radius: var(--radius-full);
+  background: var(--surface-garden);
+}
+
+.session-who {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.session-name {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.session-role {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .status-dot {
@@ -775,6 +815,49 @@ figcaption {
 
 /* ----------------------------------------------------------------- Ledger */
 
+/* Filtros del historial: se piden a la API, no se resuelven en el navegador. */
+.ledger-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-1) solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--page);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.field--search {
+  grid-column: 1 / -1;
+}
+
+.field-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.field input,
+.field select {
+  min-height: var(--size-touch);
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-1) solid var(--line-control);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
 .ledger-count {
   display: inline-flex;
   align-items: center;
@@ -862,7 +945,25 @@ figcaption {
   color: var(--text-muted);
 }
 
-.ledger-delete {
+/* Sello de la versión con que se midió la hoja: no es decoración, es procedencia. */
+.ledger-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.badge-version {
+  padding: 0 var(--space-2);
+  border: var(--border-1) solid var(--line-paper);
+  border-left: var(--border-rail) solid var(--accent-ornament);
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--ink-700);
+}
+
+.ledger-delete,
+.user-delete {
   flex: none;
   width: var(--size-touch);
   height: var(--size-touch);
@@ -875,9 +976,15 @@ figcaption {
   transition: color var(--transition), background var(--transition);
 }
 
-.ledger-delete:hover {
+.ledger-delete:hover,
+.user-delete:hover {
   background: var(--alert-bg);
   color: var(--danger);
+}
+
+.ledger-more {
+  width: 100%;
+  margin-top: var(--space-3);
 }
 
 .empty {
@@ -987,6 +1094,133 @@ figcaption {
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-5);
+}
+
+/* La puerta (ADR-017): usuario y contraseña, con el mismo papel del diálogo. */
+.login {
+  max-width: 26rem;
+}
+
+.login form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.login .dialog-actions {
+  margin-top: var(--space-2);
+}
+
+.login-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-1) solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--alert-bg);
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+/* La conserjería (ADR-018): lista de cuentas, alta y limpieza de huérfanas. */
+.users {
+  max-width: 34rem;
+}
+
+.users-note {
+  margin-bottom: var(--space-4);
+}
+
+.users-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.users-list:empty {
+  display: none;
+}
+
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--border-1) solid var(--line);
+}
+
+.user-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.user-name {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.user-handle {
+  color: var(--text-soft);
+  font-size: var(--text-xs);
+}
+
+.user-role {
+  padding: 0 var(--space-2);
+  border: var(--border-1) solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.user-role[data-role="admin"] {
+  border-color: var(--moss-600);
+  color: var(--moss-800);
+}
+
+.users-form {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--border-1) solid var(--line);
+}
+
+.users-form-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.users-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2) var(--space-3);
+}
+
+.users-form .dialog-actions {
+  margin-top: 0;
+}
+
+.users-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+@media (max-width: 560px) {
+  .users-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ------------------------------------------------------------- Responsive */

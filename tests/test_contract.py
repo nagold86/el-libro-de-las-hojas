@@ -23,6 +23,8 @@ def test_health_and_config(client: TestClient):
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
     assert health.json()["version"]
+    # Sin DATABASE_URL la persistencia es el disco: el estado lo dice (ADR-016).
+    assert health.json()["database"] == "archivos"
 
     config = client.get("/api/config")
     assert config.status_code == 200
@@ -88,6 +90,18 @@ def test_list_and_get(client: TestClient, png_bytes: bytes):
     fetched = client.get(f"/api/inspections/{created['id']}")
     assert fetched.status_code == 200
     assert fetched.json()["id"] == created["id"]
+
+
+def test_list_paginates(client: TestClient, png_bytes: bytes):
+    older = _upload(client, png_bytes, "vieja.png").json()
+    newer = _upload(client, png_bytes, "nueva.png").json()
+
+    first_page = client.get("/api/inspections", params={"limit": 1})
+    second_page = client.get("/api/inspections", params={"limit": 1, "offset": 1})
+
+    assert [item["id"] for item in first_page.json()] == [newer["id"]]
+    assert [item["id"] for item in second_page.json()] == [older["id"]]
+    assert client.get("/api/inspections", params={"limit": 0}).status_code == 422
 
 
 def test_unknown_inspection_is_404(client: TestClient):
@@ -209,6 +223,13 @@ def test_legacy_record_without_optional_trace_is_still_readable(settings_factory
         assert fetched.status_code == 200
         assert fetched.json()["trace"]["domain"] == {}
         assert fetched.json()["trace"]["isolation"] == {}
+
+
+def test_health_reports_the_database_when_configured(sql_client: TestClient):
+    health = sql_client.get("/api/health")
+
+    assert health.status_code == 200
+    assert health.json()["database"] == "ok"
 
 
 def test_persistence_across_app_instances(settings_factory, png_bytes: bytes):

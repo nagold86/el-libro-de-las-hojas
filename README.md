@@ -74,6 +74,64 @@ publican bajo `/media`. El storage por defecto es `storage/`; se cambia con
 `FELLOWSHIP_STORAGE_DIR` (también existen `FELLOWSHIP_FRONTEND_DIR`,
 `FELLOWSHIP_MAX_UPLOAD_BYTES` y `FELLOWSHIP_ALLOWED_FORMATS`).
 
+### Con base de datos
+
+El registro de análisis puede vivir en Postgres en vez de en el disco (ADR-016).
+Sin `DATABASE_URL` nada cambia: los archivos siguen siendo el camino por defecto.
+
+```powershell
+docker compose up -d                                  # postgres 16 en 5433
+python -m app.db.migrate                              # crea la tabla inspections
+$env:DATABASE_URL = "postgresql://fellowship:fellowship@127.0.0.1:5433/fellowship"
+python -m uvicorn app.main:app --reload --port 8765
+```
+
+- La base guarda el payload y **un solo PNG**, el original. El overlay y las 17
+  capas se regeneran cuando el visor las pide, con una caché en memoria
+  (`FELLOWSHIP_MEDIA_CACHE_SIZE`, 8 registros por defecto). La primera vista de
+  un registro tarda ≈ 0,9 s; la segunda, milisegundos.
+- `/api/health` agrega `database`: `archivos` sin DSN, `ok` si el ping responde y
+  `sin conexión` si no.
+- En producción se usa un DSN gestionado (Neon, Supabase) con
+  `sslmode=require`; en serverless se abre una conexión por request en vez de un
+  pool. `psycopg` se instala con `pip install -e ".[dev]"` y solo se importa
+  cuando hay base configurada.
+- Los tests de base se saltean solos si no hay servidor. Con la base levantada
+  corren además los de Postgres —contrato, repositorio, `/media`, login e
+  historial— contra `fellowship_test` (se cambia con
+  `FELLOWSHIP_TEST_DATABASE_URL`).
+
+### Con login
+
+Con `DATABASE_URL` configurada, el almanaque pide usuario y contraseña (ADR-017);
+sin base la demo sigue abierta, sin puerta. El primer administrador se crea solo:
+
+```powershell
+$env:DATABASE_URL = "postgresql://fellowship:fellowship@127.0.0.1:5433/fellowship"
+$env:FELLOWSHIP_SECRET_KEY = "una-cadena-larga-y-secreta"
+$env:FELLOWSHIP_ADMIN_USER = "nico"
+$env:FELLOWSHIP_ADMIN_PASSWORD = "una-clave-de-8-o-mas"
+python -m app.db.migrate
+python -m uvicorn app.main:app --reload --port 8765
+```
+
+- `FELLOWSHIP_SECRET_KEY` firma la cookie de sesión: si cambia, todas las sesiones
+  se cierran. Vacía, se genera una por proceso y las sesiones no sobreviven al
+  reinicio. `FELLOWSHIP_SESSION_HOURS` (12 por defecto) fija su duración.
+- El administrador se crea **solo si la tabla `users` está vacía**. Después, las
+  cuentas se manejan desde el botón **Usuarios** del encabezado (solo lo ve el
+  `admin`): alta con clave y rol, y baja por fila. `POST /api/auth/users` y
+  `DELETE /api/auth/users/{id}` hacen lo mismo sin pantalla.
+- Las contraseñas se guardan con `scrypt` y sal por usuario; nunca se escriben en
+  claro ni se devuelven por la API.
+- **Cada uno ve sus hojas** (ADR-018): el `operador` solo ve, abre, descarga,
+  informa y vacía lo suyo; el `admin` ve el almanaque completo. Dar de baja una
+  cuenta deja sus hojas en el almanaque sin dueño, y el `admin` las purga con
+  **Borrar hojas sin dueño** (o `DELETE /api/inspections?unassigned=true`).
+- Cada hoja registra quién la subió y con qué versión del software. El filtro del
+  almanaque y el sello `v0.2.0` salen de ahí, y `GET /api/versions` resume cuántas
+  hojas midió cada versión.
+
 ### Revisar y anotar el detector
 
 ```powershell
@@ -92,17 +150,32 @@ el puntaje del conjunto dorado mide acierto en vez de movimiento del detector.
 | Método | Ruta | Respuesta |
 |---|---|---|
 | `GET` | `/api/health` | estado y versión |
-| `GET` | `/api/config` | límite de subida y formatos aceptados |
+| `GET` | `/api/config` | límite de subida, formatos y si hace falta sesión |
+| `POST` | `/api/auth/login` | `200` con el usuario y la cookie de sesión |
+| `POST` | `/api/auth/logout` | `204`; borra la cookie |
+| `GET` | `/api/auth/me` | quién está en sesión (o `null`) y si hay login |
+| `POST` | `/api/auth/password` | `204`; cambia la contraseña propia |
+| `GET` | `/api/auth/users` | usuarios registrados (solo `admin`) |
+| `POST` | `/api/auth/users` | `201`; alta de usuario (solo `admin`) |
+| `DELETE` | `/api/auth/users/{id}` | `204`; da de baja la cuenta (solo `admin`, nunca la propia) |
 | `POST` | `/api/inspections` | `201` con la inspección completa |
-| `GET` | `/api/inspections` | listado, más reciente primero |
-| `GET` | `/api/inspections/{id}` | una inspección |
-| `GET` | `/api/reports/lot` | informe agregado del lote aceptado |
-| `DELETE` | `/api/inspections` | `204`; vacía el almanaque completo |
-| `DELETE` | `/api/inspections/{id}` | `204` |
+| `GET` | `/api/inspections` | historial, más reciente primero (el `operador` solo ve el suyo) |
+| `GET` | `/api/inspections/{id}` | una inspección; la de otro responde `404` |
+| `GET` | `/api/versions` | versiones registradas y cuántas hojas midió cada una |
+| `GET` | `/api/reports/lot` | informe agregado del lote (el `operador` agrega solo sus hojas) |
+| `DELETE` | `/api/inspections` | `204`; vacía el archivo: todo (admin) o lo propio (operador) |
+| `DELETE` | `/api/inspections/{id}` | `204`; la de otro responde `404` |
+
+`GET /api/inspections` acepta `limit`, `offset` y los filtros del historial:
+`version`, `owner`, `since`, `until`, `q` (nombre de archivo) y
+`unassigned=true` (hojas sin cuenta detrás; solo `admin`). El `owner` que manda
+un operador se ignora: ve lo suyo y nada más (ADR-018).
 
 Los errores de dominio viajan como `{"detail": {"code": "...", "message": "..."}}`
 con los códigos `INVALID_FILE`, `FILE_TOO_LARGE`, `IMAGE_UNUSABLE`,
-`IMAGE_NOT_A_LEAF` e `INSPECTION_NOT_FOUND`. Una imagen que no parece hoja se
+`IMAGE_NOT_A_LEAF`, `INSPECTION_NOT_FOUND` y, con base, `NO_AUTENTICADO` (`401`),
+`CREDENCIALES_INVALIDAS` (`401`), `SIN_PERMISO` (`403`), `USUARIO_EXISTENTE`
+(`409`) y `USUARIO_NO_ENCONTRADO` (`404`). Una imagen que no parece hoja se
 rechaza con `422` y el motivo medido (ver ADR-008).
 
 El botón **Informe** del Almanaque pide `GET /api/reports/lot` y muestra cifras,
@@ -112,8 +185,10 @@ cortes de severidad (1 %, 5 %, 15 %) son operativos, no agronómicos (ADR-010).
 **Guardar** descarga el informe como una página HTML autocontenida (tokens,
 estilos, tablas y SVG incluidos) en la carpeta que elija el usuario mediante el
 selector nativo del navegador; si no está disponible, cae a la descarga normal.
-**Limpiar** vacía el almanaque con una única `DELETE /api/inspections`, previa
-confirmación con la cantidad de inspecciones (ADR-011).
+**Limpiar** vacía el archivo con una única `DELETE /api/inspections`, previa
+confirmación con la cantidad de inspecciones (ADR-011). Para un operador vacía
+solo lo suyo; para el administrador, el almanaque completo. Con un filtro puesto
+queda deshabilitado: borraría más de lo que se ve en pantalla.
 
 ## Despliegue
 
@@ -129,9 +204,10 @@ Son condiciones de demo, no de producción (ADR-012):
   (Vercel corta el cuerpo en 4,5 MB). En local no cambia nada: `storage/` y
   10 MB. `FELLOWSHIP_STORAGE_DIR` sigue disponible para apuntar a un volumen
   persistente.
-- **El almanaque es de sesión.** Las fotos y medidas sobreviven mientras la
-  instancia siga viva y pueden perderse al reiniciarse. La demo muestra el
-  método y el contrato, no un historial garantizado.
+- **El almanaque es de sesión** mientras no haya `DATABASE_URL`. Las fotos y
+  medidas sobreviven lo que viva la instancia y pueden perderse al reiniciarse.
+  Con base configurada el historial y los usuarios persisten (ADR-016 y ADR-017),
+  y la demo deja de estar abierta: pide usuario y contraseña.
 - **Solo viaja lo necesario.** `.vercelignore` deja fuera `imgs/`, `storage/`,
   `docs/`, `fellowship/`, `tests/` y `sandbox/`.
 
@@ -143,17 +219,20 @@ vercel --prod
 
 ## Estado
 
-Pipeline clásico completo, medido y verificado con la suite de tests (159
-pruebas en verde):
+Pipeline clásico completo, medido y verificado con la suite de tests (282
+pruebas en verde; los de Postgres se saltean solos si no hay servidor):
 
 - `core/` implementado de punta a punta (aislamiento, preproceso de dos vistas,
   calidad, compuerta de dominio, segmentación con histéresis, clorosis,
   morfometría, descriptores y render) sin dependencias HTTP.
-- `app/` con contrato Pydantic, errores mapeados, persistencia atómica y el
-  informe del lote calculado al leer.
+- `app/` con contrato Pydantic, errores mapeados, persistencia atómica o en
+  Postgres detrás de una misma interfaz (ADR-016), login con sesión firmada sobre
+  la tabla `users`, registro de versiones publicadas (ADR-017) y el informe del
+  lote calculado al leer.
 - `frontend/` de una sola página con el sistema visual de El Libro de las Hojas,
   las 17 capas del proceso, el informe del lote (cifras, gráficos, impresión A4 y
-  copia HTML guardable) y el vaciado confirmado del almanaque.
+  copia HTML guardable), la puerta de entrada, el historial con filtros por
+  versión / quién / nombre y el vaciado confirmado del almanaque.
 - `tests/` de contrato, arquitectura y unitarios; `python -m pytest` en verde.
 - Publicado en Vercel como demo (`/tmp`, 4 MB): subida, informe, artefactos y
   vaciado verificados contra la URL pública, sin errores de consola (ADR-012).

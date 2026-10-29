@@ -6,15 +6,29 @@
 
   const API = "/api";
   const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+  // El historial se pide por páginas: el archivo crece y nadie quiere 500 filas
+  // en el primer trazo (ADR-017).
+  const PAGE_SIZE = 50;
+  // Valor de fantasma para el filtro «Quién»: las hojas sin cuenta detrás
+  // (ADR-018). No puede chocar con un usuario real, que no admite «@».
+  const UNASSIGNED = "@sin-dueno";
   const state = {
     items: [],
     current: null,
     pendingDelete: null,
     pendingClear: false,
+    pendingOrphans: false,
+    pendingUser: null,
     maxUploadBytes: DEFAULT_MAX_BYTES,
     allowedFormats: ["PNG", "JPEG"],
     busy: false,
     reportRequest: 0,
+    auth: { required: false, user: null },
+    filters: { q: "", version: "", owner: "", unassigned: false },
+    versions: [],
+    users: [],
+    page: 0,
+    hasMore: false,
   };
 
   const els = {
@@ -45,6 +59,33 @@
     ledgerList: document.getElementById("ledger-list"),
     ledgerCount: document.getElementById("ledger-count"),
     ledgerEmpty: document.getElementById("ledger-empty"),
+    ledgerMore: document.getElementById("ledger-more"),
+    filterQ: document.getElementById("filter-q"),
+    filterVersion: document.getElementById("filter-version"),
+    filterOwner: document.getElementById("filter-owner"),
+    filterOwnerField: document.getElementById("filter-owner-field"),
+    session: document.getElementById("session"),
+    sessionName: document.getElementById("session-name"),
+    sessionRole: document.getElementById("session-role"),
+    logout: document.getElementById("logout"),
+    usersOpen: document.getElementById("users-open"),
+    usersDialog: document.getElementById("users"),
+    usersList: document.getElementById("users-list"),
+    usersError: document.getElementById("users-error"),
+    usersClose: document.getElementById("users-close"),
+    userForm: document.getElementById("user-form"),
+    userUsername: document.getElementById("user-username"),
+    userDisplay: document.getElementById("user-display"),
+    userPassword: document.getElementById("user-password"),
+    userRole: document.getElementById("user-role"),
+    userSubmit: document.getElementById("user-submit"),
+    clearOrphans: document.getElementById("clear-orphans"),
+    login: document.getElementById("login"),
+    loginForm: document.getElementById("login-form"),
+    loginUser: document.getElementById("login-user"),
+    loginPassword: document.getElementById("login-password"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
     refresh: document.getElementById("refresh"),
     clearArchive: document.getElementById("clear-archive"),
     dialog: document.getElementById("confirm-delete"),
@@ -865,6 +906,15 @@ ${clone.innerHTML}
     const response = await fetch(`${API}${path}`, options);
     if (response.status === 204) return null;
 
+    // Una sesión vencida no es un error de datos: se vuelve a la puerta. Las
+    // rutas de /auth quedan afuera para que sus propios 401 se lean como son.
+    if (response.status === 401 && !path.startsWith("/auth/")) {
+      state.auth.user = null;
+      renderSession();
+      openLogin("La sesión terminó. Volvé a entrar.");
+      throw new Error("Hace falta iniciar sesión.");
+    }
+
     const isJson = (response.headers.get("content-type") || "").includes("application/json");
     const body = isJson ? await response.json() : null;
 
@@ -883,6 +933,94 @@ ${clone.innerHTML}
     return body;
   }
 
+  // -- sesión (ADR-017) ---------------------------------------------------
+
+  function renderSession() {
+    const user = state.auth.user;
+    els.session.hidden = !user;
+    // La conserjería y el filtro por dueño son cosas de administración: el
+    // operador no ve la lista de la base (ADR-018).
+    const admin = Boolean(user && user.role === "admin");
+    els.usersOpen.hidden = !admin;
+    els.filterOwnerField.hidden = !admin;
+    if (!user) return;
+    els.sessionName.textContent = user.display_name || user.username;
+    els.sessionRole.textContent = user.role === "admin" ? "administrador" : "operador";
+  }
+
+  function openLogin(message = "") {
+    els.loginError.textContent = message;
+    els.loginError.hidden = !message;
+    if (!state.auth.required || els.login.open) return;
+    els.loginPassword.value = "";
+    els.login.showModal();
+    els.loginUser.focus();
+  }
+
+  async function submitLogin(event) {
+    event.preventDefault();
+    const username = els.loginUser.value.trim();
+    const password = els.loginPassword.value;
+    if (!username || !password) return;
+
+    els.loginSubmit.disabled = true;
+    els.loginError.hidden = true;
+    try {
+      const user = await api("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      state.auth.user = user;
+      state.auth.required = true;
+      els.loginPassword.value = "";
+      els.login.close();
+      renderSession();
+      announce(`Sesión iniciada como ${user.display_name || user.username}.`);
+      await refreshArchive();
+    } catch (error) {
+      els.loginError.textContent = error.message;
+      els.loginError.hidden = false;
+      els.loginPassword.select();
+    } finally {
+      els.loginSubmit.disabled = false;
+    }
+  }
+
+  async function logout() {
+    try {
+      await api("/auth/logout", { method: "POST" });
+    } catch (error) {
+      // Si la sesión ya no existía, el resultado es el mismo: se cierra igual.
+      console.warn("No se pudo cerrar la sesión en el servidor:", error);
+    }
+    state.auth.user = null;
+    state.current = null;
+    state.page = 0;
+    state.hasMore = false;
+    // El próximo que entre empieza sin los filtros del anterior.
+    state.filters = { q: "", version: "", owner: "", unassigned: false };
+    els.filterQ.value = "";
+    els.result.hidden = true;
+    if (els.usersDialog.open) els.usersDialog.close();
+    renderSession();
+    renderLedger([]);
+    els.filterVersion.replaceChildren();
+    els.filterOwner.replaceChildren();
+    openLogin();
+  }
+
+  async function loadSession() {
+    try {
+      const me = await api("/auth/me");
+      state.auth.required = Boolean(me.auth_required);
+      state.auth.user = me.user || null;
+    } catch (error) {
+      console.warn("No se pudo leer /api/auth/me:", error);
+    }
+    renderSession();
+  }
+
   function setHealth(stateName, text) {
     els.health.dataset.state = stateName;
     els.healthText.textContent = text;
@@ -899,13 +1037,30 @@ ${clone.innerHTML}
     els.alertMessage.textContent = "";
   }
 
+  function filtersActive() {
+    const { q, version, owner, unassigned } = state.filters;
+    return Boolean(q || version || owner || unassigned);
+  }
+
+  function updateClear() {
+    // Con un filtro puesto, «Limpiar» borraría más de lo que se ve.
+    const filtered = filtersActive();
+    const admin = Boolean(state.auth.user && state.auth.user.role === "admin");
+    els.clearArchive.disabled = state.busy || state.items.length === 0 || filtered;
+    els.clearArchive.title = filtered
+      ? "Quitá el filtro para vaciar el archivo entero."
+      : admin
+        ? "Elimina todas las inspecciones del almanaque."
+        : "Elimina todas tus inspecciones.";
+  }
+
   function setBusy(busy, text = "Analizando la hoja…") {
     state.busy = busy;
     els.status.hidden = !busy;
     els.statusText.textContent = text;
     els.pick.disabled = busy;
     els.input.disabled = busy;
-    els.clearArchive.disabled = busy || state.items.length === 0;
+    updateClear();
     els.dropzone.setAttribute("aria-busy", String(busy));
     document.body.toggleAttribute("data-busy", busy);
   }
@@ -1051,9 +1206,12 @@ ${clone.innerHTML}
       ? `${record.image.width} × ${record.image.height} px · hoja aislada ` +
         `${analysis.width} × ${analysis.height} px`
       : `${record.image.width} × ${record.image.height} px`;
+    // Procedencia: versión del software y quién la subió (ADR-017).
+    const version = record.app_version ? ` · v${record.app_version}` : "";
+    const owner = record.owner ? ` · ${record.owner.display_name || record.owner.username}` : "";
     els.resultMeta.textContent =
       `#${record.id.slice(0, 10)} · ${sizeText} · ` +
-      `${record.image.format} · ${formatDate(record.created_at)}`;
+      `${record.image.format} · ${formatDate(record.created_at)}${version}${owner}`;
 
     const usable = record.quality.usable;
     els.seal.className = `seal ${usable ? "seal--ok" : "seal--warn"}`;
@@ -1082,15 +1240,32 @@ ${clone.innerHTML}
     });
   }
 
+  function option(value, label) {
+    const node = document.createElement("option");
+    node.value = value;
+    node.textContent = label;
+    return node;
+  }
+
   function renderLedger(items) {
     state.items = items;
     els.ledgerList.replaceChildren();
 
     const total = items.length;
+    const filtered = filtersActive();
     els.ledgerCount.textContent =
-      total === 0 ? "sin inspecciones" : `${total} ${total === 1 ? "inspección" : "inspecciones"}`;
+      total === 0
+        ? filtered
+          ? "sin coincidencias"
+          : "sin inspecciones"
+        : `${total} ${total === 1 ? "inspección" : "inspecciones"}` +
+          (state.hasMore ? " · hay más" : "");
     els.ledgerEmpty.hidden = total > 0;
-    els.clearArchive.disabled = total === 0 || state.busy;
+    els.ledgerEmpty.textContent = filtered
+      ? "Ninguna hoja coincide con el filtro."
+      : "La huerta espera su primera hoja.";
+    els.ledgerMore.hidden = !state.hasMore;
+    updateClear();
 
     items.forEach((record) => {
       const item = document.createElement("li");
@@ -1115,8 +1290,25 @@ ${clone.innerHTML}
       name.textContent = record.image.filename;
       name.title = record.image.filename;
       const meta = document.createElement("span");
-      meta.textContent = `${formatDate(record.created_at)} · ${format.pct(record.lesions.area_fraction)}`;
+      // Fecha, severidad y quién subió la hoja (ADR-017).
+      const parts = [formatDate(record.created_at), format.pct(record.lesions.area_fraction)];
+      if (record.owner) parts.push(record.owner.display_name || record.owner.username);
+      meta.textContent = parts.join(" · ");
+
+      const tags = document.createElement("span");
+      tags.className = "ledger-tags";
+      if (record.app_version) {
+        const badge = document.createElement("span");
+        badge.className = "badge-version";
+        badge.textContent = `v${record.app_version}`;
+        badge.title = record.method_version
+          ? `Medida con la versión ${record.app_version} · método ${record.method_version}`
+          : `Medida con la versión ${record.app_version}`;
+        tags.append(badge);
+      }
+
       text.append(name, meta);
+      if (tags.childElementCount) text.append(tags);
       load.append(thumb, text);
 
       const remove = document.createElement("button");
@@ -1132,12 +1324,248 @@ ${clone.innerHTML}
     });
   }
 
+  function historyQuery() {
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+    if (state.filters.q) params.set("q", state.filters.q);
+    if (state.filters.version) params.set("version", state.filters.version);
+    if (state.filters.owner) params.set("owner", state.filters.owner);
+    if (state.filters.unassigned) params.set("unassigned", "true");
+    if (state.page) params.set("offset", String(state.page * PAGE_SIZE));
+    return params.toString();
+  }
+
   async function loadLedger() {
     try {
-      const items = await api("/inspections");
-      renderLedger(items);
+      const items = await api(`/inspections?${historyQuery()}`);
+      // Una página llena puede no ser la última: el botón «más» lo comprueba.
+      state.hasMore = items.length === PAGE_SIZE;
+      renderLedger(state.page ? state.items.concat(items) : items);
     } catch (error) {
       showError(`No se pudo leer el archivo: ${error.message}`);
+    }
+  }
+
+  async function loadMore() {
+    if (!state.hasMore || state.busy) return;
+    state.page += 1;
+    await loadLedger();
+    announce(`${state.items.length} inspecciones en el archivo.`);
+  }
+
+  function applyFilters() {
+    state.page = 0;
+    loadLedger();
+  }
+
+  async function loadVersions() {
+    let versions = [];
+    try {
+      versions = await api("/versions");
+    } catch (error) {
+      // Sin versiones el filtro queda vacío, pero el archivo se sigue leyendo.
+      console.warn("No se pudo leer /api/versions:", error);
+    }
+    state.versions = versions || [];
+    const current = state.filters.version;
+    els.filterVersion.replaceChildren(
+      option("", "todas"),
+      ...state.versions.map((item) =>
+        option(item.version, `${item.version} · ${format.int(item.inspections)}`)
+      )
+    );
+    els.filterVersion.value = current;
+  }
+
+  async function loadUsers() {
+    const me = state.auth.user;
+    const admin = Boolean(me && me.role === "admin");
+    let users = [];
+    if (me) {
+      try {
+        // Solo el administrador ve la lista completa de la base.
+        users = admin ? await api("/auth/users") : [me];
+      } catch (error) {
+        console.warn("No se pudo leer la lista de usuarios:", error);
+        users = [me];
+      }
+    }
+    state.users = users;
+    const options = [
+      option("", "todos"),
+      ...state.users.map((user) => option(user.username, user.display_name || user.username)),
+    ];
+    // Las hojas huérfanas solo las puede pedir el administrador (ADR-018).
+    if (admin) options.push(option(UNASSIGNED, "sin dueño"));
+    const current = state.filters.unassigned ? UNASSIGNED : state.filters.owner;
+    els.filterOwner.replaceChildren(...options);
+    els.filterOwner.value = current;
+    if (els.filterOwner.value !== current) {
+      // El dueño filtrado ya no existe: se vuelve a todo el archivo.
+      state.filters.owner = "";
+      state.filters.unassigned = false;
+      els.filterOwner.value = "";
+    }
+  }
+
+  async function refreshArchive() {
+    await Promise.all([loadVersions(), loadUsers()]);
+    await loadLedger();
+  }
+
+  // -- conserjería (ADR-018) ---------------------------------------------
+
+  function showUsersError(message = "") {
+    els.usersError.textContent = message;
+    els.usersError.hidden = !message;
+  }
+
+  async function openUsers() {
+    const me = state.auth.user;
+    if (!me || me.role !== "admin" || els.usersDialog.open) return;
+    showUsersError("");
+    els.userForm.reset();
+    await loadUserRows();
+    els.usersDialog.showModal();
+    els.userUsername.focus();
+  }
+
+  async function loadUserRows() {
+    let users = [];
+    try {
+      users = await api("/auth/users");
+    } catch (error) {
+      showUsersError(`No se pudo leer la lista: ${error.message}`);
+    }
+    const me = state.auth.user;
+    els.usersList.replaceChildren(...users.map((user) => userRow(user, me)));
+  }
+
+  function userRow(user, me) {
+    const row = document.createElement("li");
+    row.className = "user-row";
+
+    const who = document.createElement("span");
+    who.className = "user-who";
+    const name = document.createElement("span");
+    name.className = "user-name";
+    name.textContent = user.display_name || user.username;
+    const handle = document.createElement("span");
+    handle.className = "user-handle";
+    handle.textContent = `@${user.username}`;
+    who.append(name, handle);
+
+    const role = document.createElement("span");
+    role.className = "user-role";
+    role.dataset.role = user.role;
+    role.textContent = user.role === "admin" ? "administrador" : "operador";
+    row.append(who, role);
+
+    if (me && user.id === me.id) {
+      // La propia cuenta no se da de baja: siempre queda un administrador.
+      const self = document.createElement("span");
+      self.className = "user-handle";
+      self.textContent = "tu cuenta";
+      row.append(self);
+      return row;
+    }
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "user-delete";
+    remove.dataset.id = user.id;
+    remove.dataset.name = user.display_name || user.username;
+    remove.setAttribute("aria-label", `Dar de baja a ${user.display_name || user.username}`);
+    remove.textContent = "×";
+    row.append(remove);
+    return row;
+  }
+
+  async function submitUser(event) {
+    event.preventDefault();
+    const username = els.userUsername.value.trim();
+    const password = els.userPassword.value;
+    if (!username || !password) return;
+
+    showUsersError("");
+    els.userSubmit.disabled = true;
+    try {
+      const created = await api("/auth/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          password,
+          display_name: els.userDisplay.value.trim(),
+          role: els.userRole.value,
+        }),
+      });
+      els.userForm.reset();
+      await loadUserRows();
+      await refreshArchive();
+      announce(`Usuario ${created.username} agregado.`);
+    } catch (error) {
+      showUsersError(`No se pudo agregar: ${error.message}`);
+    } finally {
+      els.userSubmit.disabled = false;
+    }
+  }
+
+  function askDeleteUser(id, name) {
+    if (!id) return;
+    state.pendingDelete = null;
+    state.pendingClear = false;
+    state.pendingOrphans = false;
+    state.pendingUser = { id, name };
+    els.confirmTitle.textContent = "¿Dar de baja el usuario?";
+    els.confirmAccept.textContent = "Dar de baja";
+    els.confirmText.textContent =
+      `Se borra la cuenta de “${name}”. Sus hojas quedan en el almanaque, sin dueño, y se pueden eliminar desde esta misma conserjería. No se puede deshacer.`;
+    openConfirm();
+  }
+
+  async function deleteUser(id, name) {
+    try {
+      await api(`/auth/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await loadUserRows();
+      await refreshArchive();
+      announce(`Usuario ${name} dado de baja.`);
+    } catch (error) {
+      showUsersError(`No se pudo dar de baja: ${error.message}`);
+    }
+  }
+
+  async function askPurgeOrphans() {
+    showUsersError("");
+    let found = [];
+    try {
+      // Una sola hoja alcanza para saber si hay algo que borrar.
+      found = await api("/inspections?unassigned=true&limit=1");
+    } catch (error) {
+      showUsersError(`No se pudo revisar el archivo: ${error.message}`);
+      return;
+    }
+    if (!found.length) {
+      announce("No hay hojas sin dueño.");
+      return;
+    }
+    state.pendingDelete = null;
+    state.pendingClear = false;
+    state.pendingUser = null;
+    state.pendingOrphans = true;
+    els.confirmTitle.textContent = "¿Borrar las hojas sin dueño?";
+    els.confirmAccept.textContent = "Borrar hojas";
+    els.confirmText.textContent =
+      "Se eliminarán las hojas que quedaron sin cuenta —las de usuarios dados de baja y las que nunca tuvieron dueño— con sus originales y medidas. No se puede deshacer.";
+    openConfirm();
+  }
+
+  async function purgeOrphans() {
+    try {
+      await api("/inspections?unassigned=true", { method: "DELETE" });
+      await refreshArchive();
+      announce("Hojas sin dueño eliminadas.");
+    } catch (error) {
+      showUsersError(`No se pudieron borrar: ${error.message}`);
     }
   }
 
@@ -1172,7 +1600,7 @@ ${clone.innerHTML}
       body.append("file", file, file.name);
       const record = await api("/inspections", { method: "POST", body });
       renderResult(record);
-      await loadLedger();
+      await refreshArchive();
       announce(`Inspección completada: ${record.lesions.count} lesiones detectadas.`);
     } catch (error) {
       showError(error.message);
@@ -1201,14 +1629,18 @@ ${clone.innerHTML}
   function askClear() {
     const total = state.items.length;
     if (!total) return;
+    const admin = Boolean(state.auth.user && state.auth.user.role === "admin");
+    const where = admin ? "del almanaque" : "de tu archivo";
     state.pendingDelete = null;
     state.pendingClear = true;
-    els.confirmTitle.textContent = "¿Vaciar el almanaque?";
+    state.pendingOrphans = false;
+    state.pendingUser = null;
+    els.confirmTitle.textContent = "¿Vaciar el archivo?";
     els.confirmAccept.textContent = "Vaciar archivo";
     els.confirmText.textContent =
       total === 1
-        ? "Se eliminará la única inspección del almanaque, con su original, resultado y medidas. No se puede deshacer."
-        : `Se eliminarán las ${total} inspecciones del almanaque, con sus originales, resultados y medidas. No se puede deshacer.`;
+        ? `Se eliminará la única inspección ${where}, con su original, resultado y medidas. No se puede deshacer.`
+        : `Se eliminarán las ${total} inspecciones ${where}, con sus originales, resultados y medidas. No se puede deshacer.`;
     openConfirm();
   }
 
@@ -1219,7 +1651,7 @@ ${clone.innerHTML}
         state.current = null;
         els.result.hidden = true;
       }
-      await loadLedger();
+      await refreshArchive();
       announce("Inspección eliminada.");
     } catch (error) {
       showError(`No se pudo eliminar: ${error.message}`);
@@ -1235,7 +1667,7 @@ ${clone.innerHTML}
       state.current = null;
       els.result.hidden = true;
       markCurrent("");
-      await loadLedger();
+      await refreshArchive();
       announce("Almanaque vaciado. No quedan inspecciones.");
     } catch (error) {
       showError(`No se pudo vaciar el almanaque: ${error.message}`);
@@ -1247,6 +1679,7 @@ ${clone.innerHTML}
   async function loadConfig() {
     try {
       const config = await api("/config");
+      state.auth.required = Boolean(config.auth_required);
       if (typeof config.max_upload_bytes === "number") {
         state.maxUploadBytes = config.max_upload_bytes;
       }
@@ -1321,18 +1754,68 @@ ${clone.innerHTML}
     els.dialog.addEventListener("close", () => {
       const id = state.pendingDelete;
       const clear = state.pendingClear;
+      const orphans = state.pendingOrphans;
+      const user = state.pendingUser;
       state.pendingDelete = null;
       state.pendingClear = false;
+      state.pendingOrphans = false;
+      state.pendingUser = null;
       if (els.dialog.returnValue !== "confirm") return;
       if (clear) clearArchive();
+      else if (orphans) purgeOrphans();
+      else if (user) deleteUser(user.id, user.name);
       else if (id) deleteInspection(id);
     });
 
     els.clearArchive.addEventListener("click", askClear);
 
+    els.logout.addEventListener("click", logout);
+    els.loginForm.addEventListener("submit", submitLogin);
+
+    els.usersOpen.addEventListener("click", openUsers);
+    els.usersClose.addEventListener("click", () => els.usersDialog.close());
+    els.userForm.addEventListener("submit", submitUser);
+    els.userRole.addEventListener("change", () => {
+      // Crear otro administrador es una decisión explícita: se avisa en el
+      // título del botón en vez de bloquearla.
+      els.userSubmit.textContent =
+        els.userRole.value === "admin" ? "Agregar administrador" : "Agregar usuario";
+    });
+    els.usersList.addEventListener("click", (event) => {
+      const remove = event.target.closest(".user-delete");
+      if (remove) askDeleteUser(remove.dataset.id, remove.dataset.name);
+    });
+    els.clearOrphans.addEventListener("click", askPurgeOrphans);
+    // Con base, la puerta no se cierra con Escape hasta que hay sesión.
+    els.login.addEventListener("cancel", (event) => {
+      if (state.auth.required && !state.auth.user) event.preventDefault();
+    });
+
+    // La búsqueda espera a que se termine de escribir; los selectores no.
+    let searchTimer = 0;
+    els.filterQ.addEventListener("input", () => {
+      window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => {
+        state.filters.q = els.filterQ.value.trim();
+        applyFilters();
+      }, 300);
+    });
+    els.filterVersion.addEventListener("change", () => {
+      state.filters.version = els.filterVersion.value;
+      applyFilters();
+    });
+    els.filterOwner.addEventListener("change", () => {
+      const value = els.filterOwner.value;
+      // «sin dueño» no es un usuario: pide las hojas sin cuenta detrás.
+      state.filters.unassigned = value === UNASSIGNED;
+      state.filters.owner = state.filters.unassigned ? "" : value;
+      applyFilters();
+    });
+    els.ledgerMore.addEventListener("click", loadMore);
+
     els.refresh.addEventListener("click", async () => {
       els.refresh.disabled = true;
-      await loadLedger();
+      await refreshArchive();
       els.refresh.disabled = false;
     });
 
@@ -1361,7 +1844,14 @@ ${clone.innerHTML}
   async function init() {
     bindEvents();
     await Promise.all([loadHealth(), loadConfig()]);
-    await loadLedger();
+    // Con base hay que entrar antes de leer el archivo; sin base, la demo sigue
+    // abierta y no hay puerta que cruzar (ADR-017).
+    await loadSession();
+    if (state.auth.required && !state.auth.user) {
+      openLogin();
+      return;
+    }
+    await refreshArchive();
   }
 
   init();

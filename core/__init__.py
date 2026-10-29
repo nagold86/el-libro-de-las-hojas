@@ -16,13 +16,12 @@ from core.io import Photo, encode_png, read_photo
 from core.metrics import MaskAgreement, compare_masks
 from core.morphometry import DefectMeasurer, DefectMetrics, Measurer
 from core.orchestrator import InspectionResult, LeafInspector
-from core.pipeline import Pipeline, PipelineSettings, build_pipeline
+from core.pipeline import Pipeline, PipelineSettings, build_pipeline, method_fingerprint
 from core.preprocess import PreprocessResult, Preprocessor, StandardPreprocessor
 from core.quality import QualityGate, QualityReport
 from core.render import render_overlay
 from core.segmentation import LesionSegmenter, SegmentationResult, Segmenter
-
-__version__ = "0.1.1"
+from core.version import __version__
 
 __all__ = [
     "AppearanceMetrics",
@@ -59,6 +58,7 @@ __all__ = [
     "build_pipeline",
     "compare_masks",
     "encode_png",
+    "method_fingerprint",
     "read_photo",
     "render_overlay",
 ]

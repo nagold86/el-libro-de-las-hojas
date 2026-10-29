@@ -6,6 +6,197 @@ por Gandalf y aprobada por quien resulte afectado.
 
 ---
 
+## ADR-018 — Cada operador ve sus hojas; el administrador ve el almanaque
+
+**Contexto.** ADR-017 dejó un archivo compartido: cualquier operador con sesión
+veía, abría, descargaba y borraba las hojas de todos, y el informe del lote
+promediaba hojas ajenas. Además, la única puerta de alta era la API
+(`POST /api/auth/users`) y no existía ninguna baja: un operador que se iba
+conservaba su cuenta, su clave y sus permisos para siempre.
+
+**Decisión.**
+
+- **Alcance de lectura.** El `admin` ve todo el almanaque; el `operador` ve solo
+  lo suyo. El filtro `owner` se ignora cuando quien pide es un operador
+  (`app/security.py: owner_scope`).
+- **Lo ajeno no existe.** Detalle, borrado y PNG de una hoja de otro responden el
+  mismo `404 INSPECTION_NOT_FOUND` que un identificador desconocido
+  (`can_see`). Un `403` descriptivo confirmaría que la hoja existe.
+- **Informe y vaciado también se recortan.** `GET /api/reports/lot` agrega solo
+  las hojas del operador y `DELETE /api/inspections` borra solo las suyas. Para
+  el administrador las dos rutas siguen hablando del archivo completo.
+- **Sin dueño.** `GET /api/inspections?unassigned=true` lista y
+  `DELETE /api/inspections?unassigned=true` borra las hojas que no tienen cuenta
+  detrás (solo administrador). «Sin cuenta» es `user_id IS NULL` en la base
+  —nunca hubo dueño o su usuario se dio de baja por `ON DELETE SET NULL`— y la
+  hoja sin `owner` en el payload cuando la persistencia es de archivos.
+- **Baja de usuario.** `DELETE /api/auth/users/{id}` borra la fila (`204`). Nadie
+  puede darse de baja a sí mismo (`403 SIN_PERMISO`): siempre queda un
+  administrador vivo. `404 USUARIO_NO_ENCONTRADO` si el identificador no existe.
+  La sesión del dado de baja muere en el acto, porque `authenticate` busca la
+  fila en cada pedido.
+- **Sus hojas no se borran.** Quedan en el almanaque sin dueño: el
+  administrador las sigue viendo y las purga con la ruta de huérfanas cuando ya
+  no hacen falta.
+- **Contrato del almacén.** `list(..., unassigned=False)` y
+  `clear(owner=..., unassigned=...)` en las dos implementaciones (ADR-016), más
+  el filtro `unassigned` en la lista del historial.
+- **Frontend.** La conserjería (diálogo «Usuarios»: lista con rol, alta con clave
+  y rol, baja por fila), el botón «Borrar hojas sin dueño» y la opción «sin
+  dueño» del filtro «Quién». El filtro por dueño y la conserjería solo se
+  muestran al administrador.
+
+**Consecuencias aceptadas.** «Sin dueño» no significa lo mismo en las dos
+persistencias: en archivos no hay cuentas, así que solo es huérfana la hoja que
+nunca tuvo dueño (en la base también lo son las de un usuario dado de baja). Un
+operador paga una consulta más por descarga de `/media`: el dueño se verifica
+antes de generar la imagen. La baja no es suave ni se audita más allá del log.
+El administrador pierde el aislamiento: ve todo, que es su trabajo.
+
+**Alternativas descartadas.** (a) Responder `403` en lo ajeno: confirma que la
+hoja existe. (b) Borrar en cascada las hojas del usuario dado de baja: la baja de
+una cuenta no debería reescribir el archivo histórico ni tirar mediciones que el
+lote todavía necesita. (c) Baja suave con `is_active = false`: deja cuentas
+zombis y el pedido era eliminar. (d) Un campo `visible` por hoja: multiplica
+estados sin resolver nada que el dueño no resuelva. (e) Filtrar solo en el
+frontend: el contrato es público y la API se puede llamar sin la pantalla.
+
+**Reversibilidad.** Un administrador puede deshacer el efecto de un borrado de
+usuario solo recreando la cuenta (las hojas siguen ahí, sin dueño). El alcance
+por dueño se concentra en `owner_scope` y `can_see`: volver al archivo
+compartido es cambiar dos funciones y quitar el filtro de las tres rutas.
+
+---
+
+## ADR-017 — Login en la base, sesión firmada y versiones declaradas
+
+**Contexto.** ADR-016 dejó el registro en Postgres, pero la aplicación seguía
+abierta: cualquiera con la URL podía subir hojas, vaciar el almanaque y descargar
+el informe del lote. Con un archivo compartido hace falta saber **quién** midió
+cada hoja. Además, el historial no distinguía con qué versión del software se había
+medido: promediar 0,36 % de la 0.1.1 con 0,60 % de la 0.2.0 no significa nada, por
+la misma razón por la que no se mezclan huellas de método (ADR-016). Y el almanaque
+solo mostraba las últimas inspecciones, sin ningún recorte hacia atrás.
+
+**Decisión.**
+
+- Los usuarios viven en Postgres (`users`: `id`, `username`, `display_name`,
+  `password_hash`, `role`, `is_active`). **Sin `DATABASE_URL` no hay login**: la
+  demo en archivos se queda abierta y `settings.auth_required` es exactamente
+  `settings.uses_database`.
+- Contraseñas con `hashlib.scrypt` (N = 2^14, r = 8, p = 1, sal de 16 B, clave de
+  32 B) en formato `scrypt$n$r$p$sal$hash`: el costo viaja con el hash, así subirlo
+  mañana no invalida las claves viejas. Comparación con `hmac.compare_digest` y el
+  mismo trabajo para un usuario inexistente que para uno real, para no delatar
+  cuáles existen.
+- La sesión es una cookie `HttpOnly`, `SameSite=Lax` y `Secure` **según el esquema
+  del pedido**: `payload.firma` en base64url con HMAC-SHA256 sobre
+  `{"sub", "exp"}`. No hay tabla de sesiones: cada request valida firma y
+  expiración y lee el usuario, así que el esquema no crece con el tráfico y cerrar
+  sesión es borrar la cookie.
+- Dos roles: `admin` (todo, incluido el alta de usuarios) y `operador` (mide, mira
+  y borra). El primer administrador se crea solo en el arranque y solo si la tabla
+  está vacía (`FELLOWSHIP_ADMIN_USER` / `FELLOWSHIP_ADMIN_PASSWORD`).
+- Guardas en `app/main.py`: con base, todo salvo `/api/health`, `/api/config` y
+  `/api/auth/*` exige sesión, **incluidas `/media`**. Sin base no se monta ninguna.
+- Cada inspección guarda `owner` dentro del payload (`id`, `username`,
+  `display_name`) y `user_id` como columna derivada. La columna se resuelve con
+  `(SELECT id FROM users WHERE id = %s)`: si el dueño ya no existe, queda `NULL` en
+  vez de romper el guardado, y el nombre sigue en el payload.
+- El historial (`GET /api/inspections`) acepta `version`, `owner`, `since`, `until`
+  y `q` (nombre de archivo) además de `limit`/`offset`; las dos implementaciones
+  del contrato aplican los mismos filtros.
+- `software_versions` es el registro de versiones publicadas: el propio guardado
+  hace el *upsert* de `app_version` + `method_version`, y `GET /api/versions`
+  devuelve versión, huella, notas, cantidad de hojas y ventana temporal. En modo
+  archivos la lista se agrega al vuelo (`app/versions.py`), con la misma forma.
+- El frontend abre con la puerta: ficha de sesión con nombre y rol, «Salir»,
+  filtros de versión / quién / búsqueda, «Cargar más hojas» de a 50 y el sello de la
+  versión en cada fila del almanaque.
+
+**Consecuencias aceptadas.** Con base hay que definir el administrador inicial una
+vez. El login no tiene recuperación por correo ni bloqueo por intentos: es una
+herramienta de campo con usuarios que administra una persona. «Limpiar» se
+deshabilita cuando hay un filtro puesto, porque vacía el almanaque entero y no lo
+que se ve en pantalla.
+
+**Alternativas descartadas.** (a) OAuth o un proveedor externo: una decena de
+operadores conocidos no justifica otra dependencia ni un alta afuera. (b) JWT con
+`PyJWT`: la firma HMAC de la biblioteca estándar hace lo mismo sin agregar nada. (c)
+Tabla de sesiones: escribir en cada request para poder revocar individualmente algo
+que nadie revoca. (d) Usuarios sobre el almacén de archivos: sin base no hay login
+que valga y la demo tiene que seguir abriéndose sin credenciales. (e) Login
+obligatorio siempre: rompería la demo y los tests que no usan Postgres.
+
+**Reversibilidad.** Con `DATABASE_URL` vacío la aplicación vuelve a abrirse y las
+rutas de `/api/auth` responden `400 SIN_AUTENTICACION`. `users` y
+`software_versions` se pueden vaciar sin tocar `inspections`, y el payload conserva
+`owner` aunque el usuario se borre.
+
+---
+
+## ADR-016 — El registro de análisis vive en Postgres; las capas se regeneran
+
+**Contexto.** ADR-012 dejó la demo en Vercel escribiendo en `/tmp`, que es
+efímero: cada arranque en frío se lleva el almanaque entero. Un registro son
+18 PNG (original, overlay y 17 capas) más un JSON con el payload, así que
+respaldarlos en el propio disco del deploy no es una opción y guardar los PNG
+en una base tampoco: medido sobre una hoja del dataset, el overlay y las 17
+capas suman 4,3 MB sobre 580 KB de original, y no hay forma de consultarlos.
+
+**Decisión.** Hay una base de datos como registro real y una sola interfaz para
+no obligar a nadie a saber cuál está activa.
+
+- `app/store.py` define el `Protocol` `InspectionStore` (`save`, `get`, `list`,
+  `delete`, `clear`, `original_bytes`) y `create_app` elige implementación una
+  sola vez: sin `DATABASE_URL` sigue el almacén de archivos de siempre; con
+  `DATABASE_URL`, `SqlInspectionRepository`.
+- La tabla `inspections` guarda el payload completo en `jsonb` y **un solo PNG**:
+  el original. El overlay y las capas no viajan a la base; se regeneran con el
+  mismo pipeline cuando alguien pide `/media/<id>-result.png` o
+  `-layer-<clave>.png`. Las URLs publicadas son idénticas a las de antes, así
+  que el frontend y "Guardar HTML" no se enteran.
+- Regenerar es legítimo porque el pipeline es determinista: dos corridas de la
+  misma imagen dan máscaras idénticas por sha256 (ADR-014, `VALIDACION.md`). Se
+  recuerda el último puñado de registros en memoria (`media_cache_size`, 8 por
+  defecto) para no recalcular en cada recarga. En modo archivos `/media` sigue
+  siendo un `StaticFiles` sobre el disco: ahí no se regenera nada.
+- Las columnas tipadas (`created_at`, `method_version`, `app_version`,
+  `image_sha256`, `filename`, medidas) son **derivadas** del payload en una
+  única función (`_columns`) y nunca se actualizan por separado; el payload es la
+  fuente de verdad del contrato.
+- Cada registro declara con qué método se midió: `method_fingerprint()`
+  (sha256 de los parámetros de `PipelineSettings` más `__version__`, 8 hex). El
+  informe del lote agrega `method_versions`, porque promediar 0,36 % y 0,60 % de
+  eras distintas en un mismo número no significa nada.
+- Postgres 16 en Docker para desarrollo (puerto 5433, para no chocar con un 5432
+  nativo) y un DSN gestionado en producción (Neon o Supabase con
+  `sslmode=require`): un solo dialecto, sin ORM, con `psycopg` y SQL propio en
+  `app/db/migrations/`.
+- El driver se importa dentro de `app/db/`: sin base configurada, la aplicación
+  no necesita `psycopg` instalado ni un servidor levantado.
+
+**Consecuencias aceptadas.** Desarrollar necesita Docker o un Postgres a mano;
+los tests de base se saltean solos cuando no hay servidor, con un mensaje que
+dice cómo levantarlo. La caché de regeneración es por proceso: en serverless cada
+instancia arranca fría y la primera vista de un registro paga ≈ 0,6 s. Sin DSN
+el comportamiento es el de hoy, con el disco efímero de ADR-012.
+
+**Alternativas descartadas.** (a) SQLite: resuelve el desarrollo pero no la
+demo, y habría que mantener dos dialectos. (b) Guardar los PNG como `bytea`: la
+base crece ≈ 4,8 MB por hoja y se pierde el orden y la consulta. (c) Object storage
+(S3/R2) para las imágenes: obliga a dos sistemas con dos credenciales para
+resolver un problema que el determinismo del pipeline ya resuelve. (d) ORM:
+cuatro consultas fijas no lo justifican.
+
+**Reversibilidad.** Con `DATABASE_URL` vacío se vuelve al almacén de archivos sin
+cambiar código; para recuperar el almanaque que vivía en la base alcanza con
+`SELECT payload FROM inspections` y volver a escribir los artefactos. Nada del
+contrato HTTP depende de este ADR salvo el campo `method_versions` del informe y
+el estado `database` de `/api/health`.
+
+---
+
 ## ADR-015 — La clorosis se mide por ángulo de matiz, no por canales de color
 
 **Contexto.** ADR-014 resolvió el halo pardo, pero la clorosis seguía sin nombre.

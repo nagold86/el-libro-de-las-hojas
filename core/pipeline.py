@@ -7,7 +7,9 @@ etapas.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import hashlib
+import json
+from dataclasses import asdict, dataclass, field
 
 from core.chlorosis import ChlorosisDetector
 from core.descriptors import ColorTextureDescriber, Describer
@@ -17,6 +19,7 @@ from core.morphometry import DefectMeasurer, Measurer
 from core.preprocess import Preprocessor, StandardPreprocessor
 from core.quality import QualityGate
 from core.segmentation import LesionSegmenter, Segmenter
+from core.version import __version__
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,23 @@ class Pipeline:
     # Con valor por defecto para no romper construcción de pipelines en tests
     # que no miden clorosis.
     chlorosis: ChlorosisDetector = field(default_factory=ChlorosisDetector)
+
+
+def method_fingerprint(settings: PipelineSettings | None = None) -> str:
+    """Huella corta de la corrida: parámetros declarados más versión publicada.
+
+    Dos registros con la misma huella se midieron con el mismo método, así que
+    el informe del lote puede promediarlos sin mentir. Cambiar un umbral, una
+    etapa o la versión produce una huella nueva y el informe lo advierte
+    (ADR-016).
+    """
+    config = settings or PipelineSettings()
+    payload = json.dumps(
+        {"version": __version__, **asdict(config)},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
 def build_pipeline(settings: PipelineSettings | None = None) -> Pipeline:

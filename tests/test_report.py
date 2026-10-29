@@ -115,6 +115,27 @@ def test_legacy_record_without_optional_data_is_readable():
     assert validated.isolation_methods == {"desconocido": 1}
 
 
+def test_method_versions_are_counted_per_fingerprint():
+    records = [_record("una", 0.02), _record("otra", 0.03), _record("vieja", 0.01)]
+    records[0]["method_version"] = "aaaa1111"
+    records[1]["method_version"] = "bbbb2222"
+
+    validated = LotReportOut.model_validate(build_lot_report(records))
+
+    # Un lote con dos huellas mezcla métodos y sus promedios no son comparables.
+    assert validated.method_versions == {"aaaa1111": 1, "bbbb2222": 1, "sin_huella": 1}
+
+
+def test_lot_endpoint_publishes_one_method_version(client, png_bytes: bytes):
+    from core.pipeline import method_fingerprint
+
+    client.post("/api/inspections", files={"file": ("hoja.png", png_bytes, "image/png")})
+
+    body = client.get("/api/reports/lot").json()
+
+    assert body["method_versions"] == {method_fingerprint(): 1}
+
+
 def test_lot_endpoint_is_empty_without_inspections(client):
     response = client.get("/api/reports/lot")
 

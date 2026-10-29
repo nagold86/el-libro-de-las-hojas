@@ -135,3 +135,23 @@ def test_list_skips_corrupt_and_non_object_records(tmp_path: Path):
     listing = repository.list()
 
     assert [item["id"] for item in listing] == [record["id"]]
+
+
+# -- alcance por dueño (ADR-018) -----------------------------------------
+
+
+def test_clear_unassigned_leaves_the_owned(tmp_path: Path):
+    repository = _repository(tmp_path)
+    owned = repository.save(
+        b"a",
+        b"b",
+        {
+            **PAYLOAD,
+            "owner": {"id": "u-nico", "username": "nico", "display_name": "Nico"},
+        },
+    )
+    repository.save(b"a", b"b", dict(PAYLOAD))
+
+    assert repository.clear(unassigned=True) == 1
+    assert [item["id"] for item in repository.list()] == [owned["id"]]
+    assert repository.list(unassigned=True) == []

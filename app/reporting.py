@@ -23,7 +23,8 @@ SEVERITY_BINS: tuple[tuple[str, str, float, float], ...] = (
 
 def build_lot_report(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Resume todas las inspecciones aceptadas en un informe serializable."""
-    points = [_point(record) for record in records]
+    batch = list(records)
+    points = [_point(record) for record in batch]
     areas = [point["area_fraction"] for point in points]
     counts = [point["lesion_count"] for point in points]
     ferets = [point["max_feret_px"] for point in points]
@@ -53,6 +54,11 @@ def build_lot_report(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         flag for point in points for flag in point["quality_flags"]
     )
     isolation_methods = Counter(point["isolation_method"] for point in points)
+    # Huella de método por registro (ADR-016): si aparece más de una, el lote
+    # mezcla métodos y los promedios de área no son comparables.
+    method_versions = Counter(
+        str(record.get("method_version") or "sin_huella") for record in batch
+    )
 
     return {
         "generated_at": datetime.now(timezone.utc),
@@ -77,6 +83,7 @@ def build_lot_report(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "worst": worst,
         "quality_flags": dict(sorted(quality_flags.items())),
         "isolation_methods": dict(sorted(isolation_methods.items())),
+        "method_versions": dict(sorted(method_versions.items())),
     }
 
 

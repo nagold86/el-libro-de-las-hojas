@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: fellowship-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fellowship
+      POSTGRES_PASSWORD: fellowship
+      POSTGRES_DB: fellowship
+    ports:
+      # 5433 para no chocar con un Postgres nativo en 5432.
+      - "5433:5432"
+    volumes:
+      - fellowship-pgdata:/var/lib/postgresql/data
+      # Base aparte para los tests: queda creada en el primer arranque.
+      - ./app/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fellowship -d fellowship"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  fellowship-pgdata:

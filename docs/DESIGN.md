@@ -732,3 +732,197 @@ oculta `#result`, limpia la selección y recarga el Almanaque; el estado vacío
 confirmación visual. El mismo diálogo conserva el flujo de borrado individual,
 que vuelve a escribir sus propios textos antes de abrirse. No hay deshacer: la
 confirmación es la última barrera (ADR-011).
+
+## 16. La puerta y el historial — login, filtros y sello (ADR-017)
+
+### 16.1 La puerta
+
+`<dialog class="dialog login" id="login">` reutiliza el papel del resto de los
+diálogos (`--surface`, `--line-paper`, `--radius-md`) y se limita a **26 rem**:
+es una fórmula breve, no una pantalla. Dos campos (`#login-user`,
+`#login-password`), `#login-error` y `#login-submit` con `button--primary`, el
+único botón sólido del flujo de entrada: no hay «Cancelar» cuando la base pide
+sesión, porque no hay a dónde volver.
+
+- `openLogin(mensaje)` escribe el mensaje en `#login-error` —visible solo si hay
+texto—, vacía la clave, abre con `showModal()` y enfoca el usuario. El error de
+credenciales vive **dentro** de la puerta: no se usa `showError`, porque el
+cartel de arriba quedaría tapado por el modal.
+- El formulario no navega: `submitLogin` hace `preventDefault`, deshabilita
+«Entrar» mientras espera y, si falla, selecciona la clave para reintentar sin
+volver a escribir el usuario.
+- Escape no cierra la puerta mientras `auth.required` y no hay usuario: el
+evento `cancel` del `<dialog>` se cancela. Se entra o se queda en la puerta.
+- Sin `DATABASE_URL` el diálogo nunca se abre (`state.auth.required` es falso):
+la demo en archivos conserva exactamente la pantalla de antes.
+
+### 16.2 La ficha de sesión
+
+`.masthead-meta` agrupa, a la derecha del membrete, la ficha de sesión y el
+estado del servicio, en ese orden y con `margin-left: auto`. La ficha
+(`.session`, `#session`) es una píldora `--radius-full` con borde `--moss-300`
+sobre `--surface-garden`: el mismo verde de hoja que marca lo elegido en el
+almanaque. Adentro, `.session-who` apila nombre (`--text-sm`, 700) y rol
+(`--text-2xs`, mono, versalitas, `--text-muted`), y «Salir» es un `icon-button`
+con área de toque de 44 px.
+
+La ficha nace oculta y solo aparece con usuario en sesión: no hay estado
+«desconectado» que dibujar, porque la puerta ya lo dice.
+
+### 16.3 Los filtros del Almanaque
+
+`.ledger-filters` es una grilla de dos columnas con la búsqueda a lo ancho
+(`.field--search`, `grid-column: 1 / -1`) y los dos desplegables debajo: versión
+y quién. Vive **dentro** del riel de «Archivo», antes de `.ledger-count`, para
+que se lea como parte de la lista y no como un panel aparte.
+
+- Cada control es un `.field` con `.field-label` en mono de 0.75 rem, versalitas
+y `--text-muted`: el rótulo va arriba y no como *placeholder*, porque un
+placeholder desaparece justo cuando hace falta leer qué filtra.
+- Los controles van con `--surface` sobre borde `--line-control` y
+`min-height: var(--size-touch)`: 44 px, el mismo mínimo táctil que el resto.
+- Las opciones se llenan desde `GET /api/versions` y `GET /api/auth/users`. La
+versión se rotula con su cantidad (`0.2.0 · 12`): elegir «todas» y elegir una
+versión tienen que ser distinguibles de un vistazo.
+- «Quién» y su rótulo (`#filter-owner-field`) solo se muestran al `admin`: el
+  `operador` no tiene nada que elegir, ve lo suyo y nada más (ADR-018). La última
+  opción del desplegable es **sin dueño** (`@sin-dueno`), el mismo recorte que
+  usa «Borrar hojas sin dueño». El `@` no puede aparecer en un usuario, así que
+  el centinela no choca con ninguna cuenta real.
+- Los filtros se piden a la API (`q`, `version`, `owner`), nunca se resuelven en
+el navegador: lo que se ve es lo que la base encontró, y por eso el conteo puede
+decir «sin coincidencias» en vez de mostrar una lista vacía sin explicación.
+- La búsqueda espera 300 ms después de la última tecla; los desplegables aplican
+al cambiar. Cualquier cambio de filtro vuelve a la página 0.
+
+### 16.4 Sello de versión, conteo y paginación
+
+- `.badge-version` (`v0.2.0`) cierra la fila del almanaque: píldora con borde
+`--line-paper` y riel izquierdo `--accent-ornament` (oro), el mismo recurso que
+separa secciones en el informe. No es adorno: es procedencia, y el `title`
+agrega la huella del método cuando existe.
+- `#ledger-count` resume «n inspecciones», «sin inspecciones» o «sin
+coincidencias», y agrega «· hay más» cuando la última página vino completa.
+Nunca inventa un total que no leyó.
+- `#ledger-more` («Cargar más hojas») es un `icon-button` de ancho completo que
+aparece solo si hay más: de a 50 registros por pedido. El vacío con filtro dice
+«Ninguna hoja coincide con el filtro», no el saludo de la huerta.
+- «Limpiar» se deshabilita mientras hay un filtro puesto (`updateClear`), con
+`title` que explica por qué: vaciaría mucho más de lo que se está viendo. Con
+sesión, el texto de la confirmación dice a quién alcanza el vaciado: al
+`admin` el archivo entero, al `operador` solo sus hojas (ADR-018).
+
+### 16.5 Contrato con `app.js`
+
+| Estado | Quién lo escribe | Efecto visible |
+|---|---|---|
+| `auth.required` | `/api/config` y `/api/auth/me` | abre o no la puerta al iniciar |
+| `auth.user` | login, `me`, logout | `.session` visible, nombre y rol |
+| `filters` | los tres controles | conteo, lista y estado de «Limpiar» |
+| `page` / `hasMore` | `loadLedger`, `loadMore` | `#ledger-more` y el sufijo del conteo |
+
+Un `401` en cualquier ruta que no sea `/api/auth/*` se intercepta una sola vez
+en `api()`: abre la puerta con «La sesión terminó. Volvé a entrar.» y corta la
+promesa. Así ninguna pantalla tiene que saber de sesiones vencidas.
+
+### 16.6 Deuda declarada
+
+- La conserjería no audita ni cambia claves: la baja borra la fila y deja las
+hojas sin dueño, y el cambio de clave sigue sin formulario
+(`POST /api/auth/password`).
+- Sin recorrido en navegador: la puerta, los filtros, la paginación y la
+conserjería se verificaron por código y contra la API
+([`VALIDACION.md`](VALIDACION.md), 2026-10-29); falta mirarlos en un navegador
+real.
+- Los filtros por fecha (`since` / `until`) existen en la API y no en la
+pantalla: primero hay que decidir si se piden como dos campos o como rangos
+predefinidos («última semana», «este lote»).
+
+## 17. La conserjería — alta y baja de cuentas (ADR-018)
+
+### 17.1 Dónde vive y quién la ve
+
+El botón `#users-open` («Usuarios», `icon-button`) va dentro de la ficha de
+sesión `#session`, después del nombre y antes de «Salir». `renderSession` lo
+muestra solo si `state.auth.user.role === "admin"`: el `operador` no ve el botón,
+no ve el diálogo y la API le responde `403 SIN_PERMISO` de todos modos. Sin base
+no hay sesión ni conserjería: la demo en archivos conserva la pantalla de antes.
+
+`<dialog class="dialog users" id="users">` reutiliza el papel de los demás
+diálogos (`--surface`, `--line-paper`, `--radius-md`) y se abre con `showModal()`,
+no con `method="dialog"`: la lista se recarga desde `GET /api/auth/users` *antes*
+de mostrarse, así no se ve un esqueleto vacío. El formulario de alta no es
+anidado y no cierra el diálogo al enviarse.
+
+### 17.2 La fila de la lista
+
+`#users-list` es una `ul.users-list` con tope de `14rem` y scroll propio: la
+conserjería se usa con diez cuentas, no con cien, y no debe empujar el formulario
+fuera de la ventana. Vacía, la lista desaparece (`:empty`) en vez de dejar un
+hueco.
+
+Cada `.user-row` es una línea con tres piezas:
+
+- `.user-who` apila el nombre visible (`display_name`, o el usuario si no hay) y
+  `@usuario` en mono pequeña: el mismo patrón que la ficha de sesión;
+- `.user-role` rotula «administrador» u «operador» en versalitas, con
+  `data-role="admin"` en verde (`--moss-800`) para que los administradores se
+  lean de un vistazo;
+- la baja: `.user-delete` con «×» y `aria-label` «Dar de baja a …», el mismo
+  `×` de la fila del almanaque.
+
+La propia cuenta no lleva `×`: en su lugar dice «tu cuenta». La API además
+rechaza el borrado propio (`403 SIN_PERMISO`), así que la regla no depende del
+navegador (ADR-018).
+
+### 17.3 El alta
+
+`#user-form` repite la anatomía de la puerta: `.field` con rótulo arriba y
+`--text-xs` en versalitas. Cuatro campos en dos columnas (`.users-fields`, una
+sola columna por debajo de 560 px): usuario, nombre, contraseña y rol. El usuario
+se valida con `pattern="[A-Za-z0-9._\-]+"`, 3–32 caracteres; la clave pide 8 como
+mínimo y `autocomplete="new-password"`; el rol arranca en `operador` y sube a
+`administrador` a sabiendas.
+
+Al enviar, `#user-submit` se deshabilita mientras el pedido está en vuelo (evita
+el doble alta) y el error se escribe en `#users-error`, no en el estado global: un
+`409 USUARIO_EXISTENTE` pertenece a la conserjería. El éxito resetea el
+formulario, recarga la lista y el filtro «Quién» (`refreshArchive`), y anuncia
+«Usuario … agregado».
+
+### 17.4 Las cuatro confirmaciones
+
+Una sola `#confirm-delete` sirve a todo lo destructivo. `app.js` mantiene cuatro
+banderas mutuamente excluyentes —`pendingDelete` (una hoja), `pendingClear`
+(vaciar), `pendingOrphans` (hojas sin dueño) y `pendingUser` (una cuenta)— y cada
+petición limpia las otras tres antes de abrir el diálogo. Al cerrar, el
+`close` despacha en ese orden: `clear` → `orphans` → `user` → `id`.
+
+- **Baja de usuario.** «¿Dar de baja el usuario?» / «Dar de baja». El texto
+  avisa que las hojas quedan sin dueño y que se pueden purgar desde la misma
+  conserjería. El `204` recarga lista y almanaque.
+- **Hojas sin dueño.** «Borrar hojas sin dueño» (`#clear-orphans`,
+  `button--danger`) primero *pregunta* con
+  `GET /api/inspections?unassigned=true&limit=1`: una sola hoja alcanza para
+  saber si hay algo que borrar. Si no hay, anuncia «No hay hojas sin dueño.» y no
+  abre nada —un diálogo de confirmación para cero registros es ruido—. Si hay,
+  confirma y llama a `DELETE /api/inspections?unassigned=true`.
+
+### 17.5 «Sin dueño» en el filtro «Quién»
+
+El desplegable `#filter-owner` agrega, al final y solo para el `admin`, la opción
+`@sin-dueno` (`UNASSIGNED` en `app.js`) que viaja como `unassigned=true` en el
+historial. Sirve para mirar lo que dejó una baja antes de purgarlo. El `@` no es
+un carácter válido en un usuario, así que el centinela no puede confundirse con
+una cuenta; si la opción elegida ya no existe tras recargar, `loadUsers` vuelve a
+«todos» en lugar de pedir un dueño imposible.
+
+### 17.6 Deuda declarada
+
+- No hay edición de cuentas: ni cambio de rol ni de nombre desde la pantalla. El
+  alta y la baja obligan a recrear la cuenta para cambiarle el rol.
+- La lista no pagina ni busca: con cientos de cuentas entrarían todas en el
+  diálogo. El escenario previsto es un puñado de operadores por lote.
+- Nada de esto se miró en un navegador real al 2026-10-29: el JS pasa
+  `node --check` y la API está probada de punta a punta, pero la maqueta sigue sin
+  recorrido visual.

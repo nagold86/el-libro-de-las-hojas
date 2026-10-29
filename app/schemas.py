@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -11,11 +11,66 @@ from pydantic import BaseModel, Field
 class HealthOut(BaseModel):
     status: str
     version: str
+    # "archivos" sin base configurada; "ok" o "sin conexión" con DATABASE_URL.
+    database: str = "archivos"
 
 
 class ConfigOut(BaseModel):
     max_upload_bytes: int
     allowed_formats: list[str]
+    # Con base hay login; sin base la app queda abierta (ADR-017).
+    auth_required: bool = False
+
+
+class OwnerOut(BaseModel):
+    """Quién subió la hoja. Viaja dentro del payload, no en una tabla aparte."""
+
+    id: str
+    username: str
+    display_name: str = ""
+
+
+class VersionOut(BaseModel):
+    """Una versión del software y cuántas hojas midió."""
+
+    version: str
+    method_version: str
+    notes: str = ""
+    inspections: int = Field(ge=0)
+    first_seen: datetime
+    last_seen: datetime
+
+
+class UserOut(BaseModel):
+    id: str
+    username: str
+    display_name: str
+    role: str
+    is_active: bool = True
+    created_at: datetime | None = None
+    last_login_at: datetime | None = None
+
+
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordChangeIn(BaseModel):
+    current: str = Field(min_length=1, max_length=256)
+    new: str = Field(min_length=8, max_length=256)
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=8, max_length=256)
+    display_name: str = Field(default="", max_length=80)
+    role: Literal["admin", "operador"] = "operador"
+
+
+class MeOut(BaseModel):
+    user: UserOut | None = None
+    auth_required: bool = False
 
 
 class ImageOut(BaseModel):
@@ -73,6 +128,12 @@ class TraceOut(BaseModel):
 class InspectionOut(BaseModel):
     id: str
     created_at: datetime
+    # Versión del software y huella del método que produjeron estas medidas
+    # (ADR-017). Opcionales por los registros anteriores al versionado.
+    app_version: str | None = None
+    method_version: str | None = None
+    # Ausente en registros anteriores al login.
+    owner: OwnerOut | None = None
     image: ImageOut
     quality: QualityOut
     lesions: LesionsOut
@@ -135,3 +196,5 @@ class LotReportOut(BaseModel):
     worst: list[LotPointOut]
     quality_flags: dict[str, int]
     isolation_methods: dict[str, int]
+    # Conteo por huella de método: más de una clave significa lote mixto.
+    method_versions: dict[str, int] = Field(default_factory=dict)
