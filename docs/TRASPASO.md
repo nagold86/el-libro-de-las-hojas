@@ -44,20 +44,26 @@ a un ADR, se actualiza el ADR.
 | Local | `python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload` |
 | Base local | `postgresql://fellowship:fellowship@127.0.0.1:5433/fellowship` (puerto 5433, `docker compose up -d`) |
 | Tests de base | `fellowship_test` en el mismo servidor (`FELLOWSHIP_TEST_DATABASE_URL`) |
+| Base de producción | Neon `neon-cyclamen-school` (integración de Vercel; `DATABASE_URL` es *sensitive*) |
 | Almanaque local | `storage/` con 4 inspecciones de prueba |
 | Respaldo del almanaque | `%TEMP%\fellowship-almanaque-backup` (12 archivos) |
 
 ## Condiciones de la demo (ADR-012)
 
-- En Vercel el repositorio vive en `/tmp/fellowship-storage`: es **efímero**, se
-  pierde al reiniciarse la instancia. El almacén de producción está vacío.
+- En Vercel el repositorio de archivos vive en `/tmp/fellowship-storage`: es
+  **efímero**, se pierde al reiniciarse la instancia. El historial y las cuentas
+  viven en la base gestionada (Neon, `DATABASE_URL`); los PNG se regeneran.
 - Límite de subida en producción: 4 MB (`GET /api/config`); en local, 10 MB.
-- La demo acredita contrato y método, no persistencia. Para historial real
-  alcanza con apuntar `DATABASE_URL` a un Postgres (ADR-016), sin tocar código; en
-  ese momento la app pasa a pedir login (ADR-017) y el administrador inicial sale
-  de `FELLOWSHIP_ADMIN_USER` / `FELLOWSHIP_ADMIN_PASSWORD`.
-- El repo no está conectado a Vercel: `git push` no publica. Republicar con
-  `vercel --prod` (la CLI conviene instalarla global: `npm install -g vercel`).
+- La demo acredita contrato y método, no persistencia de archivos. Con base, la
+  app pide login (ADR-017) y el administrador inicial sale de
+  `FELLOWSHIP_ADMIN_USER` / `FELLOWSHIP_ADMIN_PASSWORD`; la cookie se firma con
+  `FELLOWSHIP_SECRET_KEY`. Si falta el esquema, el login responde `500`
+  (`relation "users" does not exist`), no `401`.
+- El repo **sí** está conectado al proyecto: cada push a `main` dispara un
+  deployment de producción (~30 s) y cada rama, uno de preview. `vercel --prod`
+  queda para publicar sin commit. Ojo: `vercel env pull` devuelve `[SENSITIVE]`
+  para `DATABASE_URL`, así que las migraciones de producción se corren con el DSN
+  de Neon a mano.
 
 ## Orden de lectura antes de tocar nada
 
@@ -99,16 +105,19 @@ a un ADR, se actualiza el ADR.
 - **Sin integración continua**: los 282 tests corren solo a mano.
 - **Camino de base verificado** (2026-10-29): migraciones desde cero que
   sobreviven al proceso, login, filtros del historial y una hoja que reaparece
-  con su original después de reiniciar el servidor. Falta la prueba equivalente
-  contra un DSN gestionado (Neon), que es lo único que cambia en producción.
-- **La puerta y la conserjería no se probaron en navegador.** La API está
-  verificada de punta a punta y el JS pasa `node --check`, pero el diálogo de
-  login, los filtros, el sello de versión, el diálogo **Usuarios** y las
-  confirmaciones solo se miraron en código.
-- **Sin base, un DSN mal configurado da 500.** Con `DATABASE_URL` apuntando a un
-  servidor caído, `/api/health` lo dice (`sin conexión`) pero las rutas de
-  `inspections` fallan con `DatabaseUnavailable` sin traducir a `503`. Faltan un
-  handler y un ADR.
+  con su original después de reiniciar el servidor. La misma base gestionada de
+  Neon quedó verificada en producción (login, alta de operador y aislamiento);
+  falta probar un DSN fuera de la integración de Vercel.
+- **Recorrido en navegador parcial.** El 2026-10-29 se probaron en producción la
+  puerta, la conserjería (alta de un operador) y el aislamiento entre cuentas. Los
+  filtros por fecha, el guardado del informe y el cierre del diálogo con Escape
+  siguen sin mirarse en un navegador real.
+- **Sin base o con la base sin migrar, da 500.** Con `DATABASE_URL` apuntando a
+  un servidor caído, `/api/health` lo dice (`sin conexión`) pero las rutas de
+  `inspections` fallan con `DatabaseUnavailable` sin traducir a `503`. Y con la
+  base nueva sin `python -m app.db.migrate`, el login muere en `relation "users"
+  does not exist` (verificado en producción el 2026-10-29). Faltan un handler y
+  un ADR.
 - **El almanaque actual no se migra solo.** Los registros que ya están en
   `storage/` se pueden importar con un script que reutilice el mismo `id`; no es
   parte de la entrega.

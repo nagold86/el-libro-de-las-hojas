@@ -211,11 +211,17 @@ Son condiciones de demo, no de producción (ADR-012):
 - **Solo viaja lo necesario.** `.vercelignore` deja fuera `imgs/`, `storage/`,
   `docs/`, `fellowship/`, `tests/` y `sandbox/`.
 
-Para republicar, desde la raíz:
+El repo está conectado al proyecto: cada push a `main` publica solo. Para
+publicar sin commit, desde la raíz:
 
 ```powershell
-vercel --prod
+git push origin main     # deployment de producción, ~30 s
+vercel --prod            # publicar el working copy sin commit
 ```
+
+Con base configurada, un deployment contra una base nueva necesita el esquema:
+`python -m app.db.migrate` con `DATABASE_URL` apuntando a esa base. Sin él, el
+login responde `500` (`relation "users" does not exist`).
 
 ## Estado
 

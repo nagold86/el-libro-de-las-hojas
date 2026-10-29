@@ -18,6 +18,40 @@ Formato de cada entrada:
 
 ---
 
+## 2026-10-29 — producción con base gestionada y conserjería (ADR-018 en Vercel)
+
+- n: la demo publicada sobre el Neon del proyecto (`neon-cyclamen-school`), con
+  la suite local en 282. El despliegue sale del push a `main`, porque el repo
+  **sí** está vinculado a Vercel (~30 s).
+- Servicio: `/api/health` → `ok`, `database: ok`, `0.2.0`; `/api/config` →
+  `auth_required: true`, 4 MB; `/api/inspections` sin sesión → `401
+  NO_AUTENTICADO`.
+- Esquema: se aplicó desde el **SQL Editor de Neon**. La pestaña *Query* de
+  Vercel abre una transacción de solo lectura (`cannot execute CREATE TABLE in a
+  read-only transaction`) y el protocolo extendido rechaza varios comandos por
+  pedido, así que el esquema viajó como un único bloque `DO … EXECUTE`
+  (`sandbox/esquema_produccion.sql`, probado antes contra Postgres local con
+  rollback). `schema_migrations` quedó con `001_init` y
+  `002_users_and_versions`.
+- Fallo encontrado y corregido: antes de migrar, el login respondía `500` con
+  `psycopg.errors.UndefinedTable: relation "users" does not exist`, mientras
+  `/api/health` decía `ok` porque solo hace `SELECT 1`. Queda como pendiente
+  traducir ese caso a `503` (cambia contrato, necesita ADR).
+- Credenciales: `FELLOWSHIP_SECRET_KEY`, `FELLOWSHIP_ADMIN_USER` y
+  `FELLOWSHIP_ADMIN_PASSWORD` se cargaron en Production y Preview; el
+  administrador lo creó `bootstrap_admin` en el arranque siguiente. Sin la clave
+  de firma, `SessionSigner` genera una por proceso y las sesiones se caen entre
+  instancias.
+- Recorrido en navegador: login del `admin`, alta de un operador desde
+  **Usuarios** y aislamiento entre las dos cuentas (el operador solo ve su hoja).
+  Cierra el pendiente «no probado en navegador» del ADR-017/018.
+- Sin verificar todavía: la purga de huérfanas en producción con datos reales
+  (el recorrido local del mismo día la cubre: `sandbox/verificar_scope.py`,
+  37/37) y los filtros por fecha.
+- Veredicto: **APTO** para la demo con sesión.
+
+---
+
 ## 2026-10-29 — alcance por dueño y conserjería (ADR-018)
 
 - n: 11 casos HTTP nuevos en `tests/test_scope.py` (dos cuentas reales sobre
