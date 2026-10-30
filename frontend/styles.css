@@ -596,6 +596,169 @@ body[data-busy] .dropzone-seal {
   }
 }
 
+/* ----------------------------------------------------------------- Tuning */
+
+/* Panel de umbrales (ADR-022). Vive dentro del depósito porque ajusta lo que se
+   va a medir, no lo que ya se midió. Cerrado por defecto: quien solo quiere
+   subir hojas no tiene que ver nueve deslizadores. */
+
+.tuning {
+  margin-top: var(--space-4);
+  border: var(--border-1) solid var(--line-paper);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.tuning > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-touch);
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-soft);
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  list-style: none;
+  cursor: pointer;
+}
+
+.tuning > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* La flecha es un ornamento dibujado: mismo trazo en todos los tamaños. */
+.tuning > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: calc(var(--space-2) / 2) solid transparent;
+  border-bottom: calc(var(--space-2) / 2) solid transparent;
+  border-left: var(--space-2) solid currentColor;
+  transition: transform var(--transition);
+}
+
+.tuning[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.tuning > summary:focus-visible {
+  outline: var(--border-2) solid var(--focus);
+  outline-offset: var(--border-2);
+}
+
+.tuning-badge {
+  padding: 0 var(--space-2);
+  border: var(--border-1) solid var(--accent-ornament);
+  border-radius: var(--radius-full);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-family: var(--font-body);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.02em;
+}
+
+.tuning-note,
+.tuning-status {
+  margin: 0 var(--space-4) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.tuning-status:empty {
+  display: none;
+}
+
+.tuning-grid {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4) 0;
+}
+
+@media (min-width: 640px) {
+  .tuning-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4) var(--space-5);
+  }
+}
+
+.tuning-group {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
+  padding-bottom: var(--space-1);
+  border-bottom: var(--border-1) solid var(--line);
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tuning-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-1) var(--space-2);
+  padding-left: var(--space-2);
+  border-left: var(--border-rail) solid transparent;
+}
+
+/* El umbral movido lleva el filete de acento: el ojo sabe dónde mirar. */
+.tuning-field.is-changed {
+  border-left-color: var(--accent-ornament);
+}
+
+.tuning-label {
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.tuning-value {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tuning-field.is-changed .tuning-value {
+  color: var(--accent);
+}
+
+/* 44 px de alto: el deslizador se toma con el pulgar, con guantes, de pie. */
+.tuning-field input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: var(--size-touch);
+  margin: 0;
+  background: transparent;
+  accent-color: var(--focus);
+  cursor: pointer;
+}
+
+.tuning-help {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+.tuning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-4);
+}
+
+@media print {
+  .tuning {
+    display: none;
+  }
+}
+
 /* ----------------------------------------------------------------- Result */
 
 .result {

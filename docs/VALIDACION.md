@@ -18,6 +18,42 @@ Formato de cada entrada:
 
 ---
 
+## 2026-10-30 — compuerta: tejido en lugar de verde (ADR-023)
+
+- n: 8 fotos de hoja entera del banco externo (USDA ARS, `sandbox/externas/`),
+  de 252×165 a 2752×1800; 6 primeros planos de `imgs/` y 6 controles sintéticos.
+  No es el conjunto golden: no audita IoU de lesión.
+- Resultado: 8/8 hojas aceptadas con `score ≤ 1`. Las dos que antes se rechazaban
+  ahora pasan con `score = 0` y analizan 7 y 4 manchas:
+  - `usda_k5993-1i`: antes ExG 0,086 (mínimo 0,10) y varianza 714 (máximo 400);
+    ahora tejido 0,651 y varianza 129.
+  - `usda_k5994-1i`: antes ExG 0,093 y varianza 1815; ahora tejido 0,652 y
+    varianza 312.
+- Textura: el mismo tejido mide 129–312 en lugar de 714–1815, así que el límite
+  de 400 quedó con margen real y dejó de depender de la resolución del archivo.
+- Controles negativos: cielo sintético 2 violaciones, papel 4, pared 3; los tres
+  rechazados. El ruido blanco no llega a la compuerta porque el aislamiento lo
+  corta antes (`sin_hoja`), y así queda probado en
+  `test_noise_never_reaches_the_domain_gate`.
+- Ajuste por pantalla, verificado contra el servidor:
+  `min_tissue_fraction = 0,95` con tolerancia 0 sobre `k5994-7i` →
+  `422 IMAGE_NOT_A_LEAF` con «tejido fuera de la familia foliar: 54.0 % (mínimo
+  95 %)». Un par de rangos invertido → `422 INVALID_THRESHOLDS`. La huella cambia
+  con el ajuste (`886dd749` contra `03b278ee` de la corrida por defecto, ambos
+  medidos con `0.2.0`). Publicar `0.2.1` la mueve a `c655c639` sin tocar ningún
+  umbral: la versión entra en el hash.
+- Fallos encontrados y corregidos: (a) tres requisitos de color que en una hoja
+  seca fallaban juntos y la rechazaban; (b) varianza local medida en ventana fija
+  de 5×5, que dependía de la resolución del archivo; (c) la entropía de una
+  imagen de un solo nivel se publicaba como `-0.00`.
+- Repetibilidad: determinista, mismas entradas y mismos rasgos; la compuerta no
+  tiene azar.
+- Fuga de datos: ninguna; las externas viven fuera del dataset.
+- Veredicto: APTO para `envelope_v1` en su tercera calibración. Sustituye la
+  pasada del 2026-10-21.
+
+---
+
 ## 2026-10-29 — producción con base gestionada y conserjería (ADR-018 en Vercel)
 
 - n: la demo publicada sobre el Neon del proyecto (`neon-cyclamen-school`), con

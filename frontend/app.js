@@ -29,6 +29,8 @@
     users: [],
     page: 0,
     hasMore: false,
+    // Catálogo de umbrales y valores que muestra el panel (ADR-022).
+    tuning: { catalogue: [], defaults: {}, values: {} },
   };
 
   const els = {
@@ -38,6 +40,12 @@
     pick: document.getElementById("pick"),
     input: document.getElementById("file-input"),
     dropHint: document.getElementById("drop-hint"),
+    tuningPanel: document.getElementById("tuning"),
+    tuningGrid: document.getElementById("tuning-grid"),
+    tuningBadge: document.getElementById("tuning-badge"),
+    tuningReset: document.getElementById("tuning-reset"),
+    tuningApply: document.getElementById("tuning-apply"),
+    tuningStatus: document.getElementById("tuning-status"),
     alert: document.getElementById("alert"),
     alertMessage: document.getElementById("alert-message"),
     status: document.getElementById("status"),
@@ -1063,6 +1071,8 @@ ${clone.innerHTML}
     updateClear();
     els.dropzone.setAttribute("aria-busy", String(busy));
     document.body.toggleAttribute("data-busy", busy);
+    // «Repetir» no puede dispararse mientras corre algo.
+    if (els.tuningApply) updateTuning();
   }
 
   function metric(label, value, unit, formatter = format.num) {
@@ -1228,6 +1238,9 @@ ${clone.innerHTML}
       `Hoja ${record.image.filename} con ${record.lesions.count} lesiones marcadas en óxido ` +
       "y nervaduras en oro.";
     renderLayers(record);
+    // El panel se sincroniza con lo que midió esta corrida, no con lo que
+    // quedó del intento anterior.
+    syncTuning(record);
     els.trace.textContent = JSON.stringify(record.trace, null, 2);
     els.originalLink.href = record.original_url;
     els.deleteCurrent.dataset.id = record.id;
@@ -1580,7 +1593,7 @@ ${clone.innerHTML}
     }
   }
 
-  async function upload(file) {
+  async function upload(file, tuning = {}) {
     if (!file || state.busy) return;
     clearError();
 
@@ -1598,6 +1611,9 @@ ${clone.innerHTML}
     try {
       const body = new FormData();
       body.append("file", file, file.name);
+      // El ajuste viaja al lado del archivo; vacío significa «los defectos»
+      // (ADR-022). Como campo hermano no hace falta reserializar la imagen.
+      if (Object.keys(tuning).length) body.append("tuning", JSON.stringify(tuning));
       const record = await api("/inspections", { method: "POST", body });
       renderResult(record);
       await refreshArchive();
@@ -1693,6 +1709,171 @@ ${clone.innerHTML}
     } catch (error) {
       // El servidor vuelve a validar; el límite por defecto alcanza para seguir.
       console.warn("No se pudo leer /api/config:", error);
+    }
+  }
+
+  // -- umbrales (ADR-022) -------------------------------------------------
+
+  function tuningReadout(parameter, value) {
+    const text = parameter.integer ? String(Math.round(value)) : numberFormat.format(value);
+    return parameter.unit ? `${text} ${parameter.unit}` : text;
+  }
+
+  function tuningField(parameter, value) {
+    const field = document.createElement("div");
+    field.className = "tuning-field";
+    if (Math.abs(value - parameter.default) > 1e-9) field.classList.add("is-changed");
+
+    const label = document.createElement("label");
+    label.className = "tuning-label";
+    label.htmlFor = `tuning-${parameter.key}`;
+    label.textContent = parameter.label;
+
+    const readout = document.createElement("output");
+    readout.className = "tuning-value";
+    readout.htmlFor = `tuning-${parameter.key}`;
+    readout.textContent = tuningReadout(parameter, value);
+
+    const input = document.createElement("input");
+    input.type = "range";
+    input.id = `tuning-${parameter.key}`;
+    input.dataset.key = parameter.key;
+    input.min = String(parameter.min);
+    input.max = String(parameter.max);
+    input.step = String(parameter.integer ? 1 : parameter.step);
+    input.value = String(value);
+
+    const help = document.createElement("p");
+    help.className = "tuning-help";
+    help.textContent = parameter.help;
+
+    field.append(label, readout, input, help);
+    return field;
+  }
+
+  function renderTuning() {
+    const { catalogue, values } = state.tuning;
+    if (!catalogue.length) {
+      els.tuningPanel.hidden = true;
+      return;
+    }
+    els.tuningPanel.hidden = false;
+
+    const nodes = [];
+    let group = "";
+    catalogue.forEach((parameter) => {
+      if (parameter.group !== group) {
+        group = parameter.group;
+        const heading = document.createElement("p");
+        heading.className = "tuning-group";
+        heading.textContent = group;
+        nodes.push(heading);
+      }
+      nodes.push(tuningField(parameter, values[parameter.key] ?? parameter.default));
+    });
+    els.tuningGrid.replaceChildren(...nodes);
+    updateTuning();
+  }
+
+  // Lo que viaja: solo los valores distintos del defecto, para que el registro
+  // no arrastre el catálogo entero ni el trace se llene de valores repetidos.
+  function tuningPayload() {
+    const moved = {};
+    state.tuning.catalogue.forEach((parameter) => {
+      const value = state.tuning.values[parameter.key];
+      if (value === undefined || value === null) return;
+      if (Math.abs(value - parameter.default) > 1e-9) moved[parameter.key] = value;
+    });
+    return moved;
+  }
+
+  function sameTuning(left, right) {
+    const shape = (tuning) =>
+      Object.keys(tuning)
+        .sort()
+        .map((key) => `${key}=${tuning[key]}`)
+        .join("|");
+    return shape(left) === shape(right);
+  }
+
+  function updateTuning() {
+    if (!els.tuningApply) return;
+    const payload = tuningPayload();
+    const moved = Object.keys(payload).length;
+    els.tuningBadge.hidden = moved === 0;
+    els.tuningBadge.textContent = moved
+      ? `${moved} ${moved === 1 ? "ajuste" : "ajustes"}`
+      : "";
+    const applied = state.current && state.current.trace ? state.current.trace.tuning || {} : {};
+    // «Repetir» solo cuando hay una hoja cargada y el ajuste difiere del que la
+    // midió: repetir lo mismo daría un registro gemelo.
+    els.tuningApply.disabled = !state.current || state.busy || sameTuning(payload, applied);
+  }
+
+  function syncTuning(record) {
+    const applied = (record && record.trace && record.trace.tuning) || {};
+    const values = { ...state.tuning.defaults };
+    Object.keys(applied).forEach((key) => {
+      // Una clave que ya no está en el catálogo no puede mover un deslizador.
+      if (key in values) values[key] = applied[key];
+    });
+    state.tuning.values = values;
+    if (state.tuning.catalogue.length) renderTuning();
+  }
+
+  function resetTuning() {
+    state.tuning.values = { ...state.tuning.defaults };
+    els.tuningStatus.textContent = "";
+    renderTuning();
+  }
+
+  async function loadThresholds() {
+    try {
+      const data = await api("/thresholds");
+      state.tuning.catalogue = Array.isArray(data.parameters) ? data.parameters : [];
+      state.tuning.defaults = data.defaults || {};
+      state.tuning.values = { ...state.tuning.defaults };
+      renderTuning();
+    } catch (error) {
+      // Sin catálogo la pantalla sigue analizando con los defectos del servidor:
+      // el panel se esconde y nadie pierde la subida.
+      console.warn("No se pudo leer /api/thresholds:", error);
+      if (els.tuningPanel) els.tuningPanel.hidden = true;
+    }
+  }
+
+  async function repeatAnalysis() {
+    const record = state.current;
+    if (!record || state.busy) return;
+    const payload = tuningPayload();
+    const before = record.id;
+    clearError();
+    els.tuningStatus.textContent = "";
+
+    let file;
+    setBusy(true, "Trayendo la hoja original…");
+    try {
+      // La hoja que se repite es la original guardada, no el overlay: las dos
+      // corridas miden la misma foto y se pueden comparar.
+      const response = await fetch(record.original_url, { credentials: "same-origin" });
+      if (!response.ok) throw new Error("No se pudo leer la hoja original del archivo.");
+      const blob = await response.blob();
+      file = new File([blob], record.image.filename, { type: blob.type || "image/png" });
+    } catch (error) {
+      setBusy(false);
+      showError(error.message);
+      return;
+    }
+
+    setBusy(false);
+    await upload(file, payload);
+    // Si la corrida falló, ``upload`` ya mostró el motivo y no hay nada que decir.
+    if (state.current && state.current.id !== before) {
+      const moved = Object.keys(payload).length;
+      els.tuningStatus.textContent = moved
+        ? `Repetida con ${moved} ${moved === 1 ? "umbral ajustado" : "umbrales ajustados"}; ` +
+          "la corrida anterior queda en el archivo."
+        : "Repetida con los umbrales por defecto.";
     }
   }
 
@@ -1813,6 +1994,29 @@ ${clone.innerHTML}
     });
     els.ledgerMore.addEventListener("click", loadMore);
 
+    // Panel de umbrales (ADR-022): el deslizador solo mueve un valor; repetir
+    // el análisis es lo que crea un registro nuevo.
+    if (els.tuningGrid) {
+      els.tuningGrid.addEventListener("input", (event) => {
+        const input = event.target.closest("input[data-key]");
+        if (!input) return;
+        const parameter = state.tuning.catalogue.find((entry) => entry.key === input.dataset.key);
+        if (!parameter) return;
+        const value = parameter.integer ? Math.round(Number(input.value)) : Number(input.value);
+        state.tuning.values[parameter.key] = value;
+        const field = input.closest(".tuning-field");
+        if (field) {
+          field.classList.toggle("is-changed", Math.abs(value - parameter.default) > 1e-9);
+          const readout = field.querySelector(".tuning-value");
+          if (readout) readout.textContent = tuningReadout(parameter, value);
+        }
+        els.tuningStatus.textContent = "";
+        updateTuning();
+      });
+      els.tuningReset.addEventListener("click", resetTuning);
+      els.tuningApply.addEventListener("click", repeatAnalysis);
+    }
+
     els.refresh.addEventListener("click", async () => {
       els.refresh.disabled = true;
       await refreshArchive();
@@ -1843,7 +2047,7 @@ ${clone.innerHTML}
 
   async function init() {
     bindEvents();
-    await Promise.all([loadHealth(), loadConfig()]);
+    await Promise.all([loadHealth(), loadConfig(), loadThresholds()]);
     // Con base hay que entrar antes de leer el archivo; sin base, la demo sigue
     // abierta y no hay puerta que cruzar (ADR-017).
     await loadSession();

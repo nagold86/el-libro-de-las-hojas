@@ -120,6 +120,9 @@ class TraceOut(BaseModel):
     segmentation: dict[str, Any]
     # Vacío en registros anteriores a la clorosis (ADR-015).
     chlorosis: dict[str, Any] = Field(default_factory=dict)
+    # Solo los umbrales que el operario movió en esta corrida (ADR-022). Vacío
+    # significa «se midió con los defectos».
+    tuning: dict[str, Any] = Field(default_factory=dict)
     # Fichas de las capas visuales, en orden de ejecución. Los píxeles viven en
     # ``layer_urls``; acá solo van key, etapa, título, leyenda y tamaño.
     layers: list[dict[str, Any]] = Field(default_factory=list)
@@ -145,6 +148,35 @@ class InspectionOut(BaseModel):
     original_url: str
     # PNG por clave de capa. Vacío en registros anteriores a la traza visual.
     layer_urls: dict[str, str] = Field(default_factory=dict)
+
+
+class ParameterOut(BaseModel):
+    """Ficha de un umbral ajustable: qué mueve, su rango y su defecto."""
+
+    key: str
+    label: str
+    help: str
+    group: str
+    min: float
+    max: float
+    step: float
+    default: float
+    unit: str = ""
+    integer: bool = False
+
+
+class ThresholdsOut(BaseModel):
+    """Catálogo vigente de umbrales (ADR-022).
+
+    La pantalla se dibuja con esto: no trae valores de usuario, solo lo que se
+    puede mover y hasta dónde.
+    """
+
+    method_version: str
+    parameters: list[ParameterOut]
+    # Mezcla los flotantes del método con los enteros de la envolvente de dominio
+    # (``allowed_violations``), que no se pueden redondear a la fuerza.
+    defaults: dict[str, float | int]
 
 
 class LotTotalsOut(BaseModel):

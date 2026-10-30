@@ -86,6 +86,28 @@
           <input class="visually-hidden" id="file-input" type="file" accept="image/png,image/jpeg" tabindex="-1" aria-label="Elegir una imagen PNG o JPEG">
         </div>
 
+        <!-- Umbrales (ADR-022): el operario mueve lo que se mide y repite la
+             corrida sobre la misma hoja. El catálogo —rangos, pasos y textos—
+             llega de GET /api/thresholds; acá solo viven los contenedores. -->
+        <details class="tuning" id="tuning" hidden>
+          <summary>
+            <span class="tuning-summary">Ajustar umbrales</span>
+            <span class="tuning-badge" id="tuning-badge" hidden></span>
+          </summary>
+          <p class="tuning-note">
+            Mové un deslizador y repetí el análisis: se mide la misma hoja con otro criterio y
+            queda como una inspección aparte, con su propia huella de método.
+          </p>
+          <div class="tuning-grid" id="tuning-grid"></div>
+          <div class="tuning-actions">
+            <button class="icon-button" type="button" id="tuning-reset">Volver al defecto</button>
+            <button class="button button--primary" type="button" id="tuning-apply" disabled>
+              Repetir el análisis
+            </button>
+          </div>
+          <p class="tuning-status" id="tuning-status" role="status" aria-live="polite"></p>
+        </details>
+
         <div class="alert" id="alert" role="alert" hidden>
           <strong>No se pudo completar.</strong>
           <span id="alert-message"></span>

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from core.exceptions import (
     InspectionNotFound,
     InvalidImage,
+    InvalidTuning,
     LeafError,
     NotALeaf,
     UnusableImage,
@@ -28,6 +29,7 @@ CORE_ERRORS: dict[type[LeafError], tuple[int, str]] = {
     UnusableImage: (422, "IMAGE_UNUSABLE"),
     NotALeaf: (422, "IMAGE_NOT_A_LEAF"),
     InspectionNotFound: (404, "INSPECTION_NOT_FOUND"),
+    InvalidTuning: (422, "INVALID_THRESHOLDS"),
     LeafError: (400, "LEAF_ERROR"),
 }
 

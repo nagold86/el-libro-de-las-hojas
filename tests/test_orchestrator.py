@@ -125,6 +125,19 @@ def test_non_leaf_raises_before_measuring(document_image: np.ndarray):
     assert "no parece superficie de hoja" in str(excinfo.value)
 
 
+def test_noise_never_reaches_the_domain_gate():
+    """El ruido lo corta el aislamiento: la compuerta no tiene que juzgarlo.
+
+    La compuerta mira color y textura de un recorte de hoja; el ruido no llega
+    a esa instancia porque el aislamiento no encuentra una forma que recortar.
+    """
+    rng = np.random.default_rng(11)
+    noise = np.clip(rng.normal(120, 45, (240, 240, 3)), 0, 255).astype(np.uint8)
+
+    with pytest.raises(NotALeaf):
+        LeafInspector().inspect(noise)
+
+
 def test_domain_gate_measures_the_original_image(leaf_image: np.ndarray):
     # El balance de blancos neutraliza escenas verdes cerradas: la compuerta
     # debe decidir sobre los píxeles originales, no sobre la versión balanceada.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 
 from app.auth import User
 from app.schemas import InspectionOut
@@ -19,7 +19,9 @@ from app.uploads import read_upload
 from core.exceptions import InspectionNotFound
 from core.io import encode_png
 from core.orchestrator import LeafInspector
+from core.pipeline import build_pipeline, method_fingerprint
 from core.render import render_overlay, to_rgb
+from core.tuning import Tuning
 from core.version import __version__
 
 router = APIRouter(prefix="/api/inspections", tags=["inspections"])
@@ -36,6 +38,19 @@ def _inspector(request: Request) -> LeafInspector:
     return request.app.state.inspector
 
 
+def _for_tuning(request: Request, tuning: Tuning) -> tuple[LeafInspector, str]:
+    """Inspector y huella del método para la corrida que se pide.
+
+    Sin ajustes se reusa el de la aplicación, que ya viene armado. Con ajustes se
+    arma uno aparte con la misma fábrica: mover un umbral no puede tocar la
+    estructura del método, solo el valor con el que se mide (ADR-022).
+    """
+    if tuning.is_default():
+        return _inspector(request), request.app.state.method_version
+    settings = tuning.to_settings()
+    return LeafInspector(pipeline=build_pipeline(settings)), method_fingerprint(settings)
+
+
 @router.post(
     "",
     response_model=InspectionOut,
@@ -44,30 +59,51 @@ def _inspector(request: Request) -> LeafInspector:
     responses={
         400: {"description": "Archivo ilegible o formato no permitido"},
         413: {"description": "Archivo demasiado grande"},
-        422: {"description": "Imagen legible pero no analizable o que no parece una hoja"},
+        422: {
+            "description": (
+                "Imagen legible pero no analizable, que no parece una hoja, "
+                "o umbrales fuera de rango"
+            )
+        },
     },
 )
 def create_inspection(
     request: Request,
     file: UploadFile = File(...),
+    tuning: str | None = Form(
+        None,
+        description="Umbrales ajustados como objeto JSON; ausente usa los defectos",
+    ),
     user: User | None = Depends(current_user),
 ) -> InspectionOut:
     settings = request.app.state.settings
     data = file.file.read(settings.max_upload_bytes + 1)
     upload = read_upload(data, file.filename, file.content_type, settings)
 
-    result = _inspector(request).inspect(upload.photo.image)
+    # Los umbrales llegan como campo de formulario, no como JSON en el cuerpo: el
+    # archivo viaja en multipart y este campo es su hermano (ADR-022).
+    adjust = Tuning.from_json(tuning)
+    inspector, method_version = _for_tuning(request, adjust)
+
+    result = inspector.inspect(upload.photo.image)
     # El overlay se dibuja sobre la imagen analizada: si el aislamiento recortó
     # la hoja, el resultado muestra la hoja sin fondo y las máscaras coinciden.
+    # Va anotado —contornos, número por mancha y leyenda— para que la imagen
+    # final diga dónde está cada cosa sin abrir la traza (ADR-019).
     overlay = render_overlay(
-        result.image, result.lesion_mask, result.vein_mask, chlorosis_mask=result.chlorosis_mask
+        result.image,
+        result.lesion_mask,
+        result.vein_mask,
+        chlorosis_mask=result.chlorosis_mask,
+        annotate=True,
     )
 
     payload = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         # Con qué método se midió: el informe del lote no promedia huellas
-        # distintas sin avisar (ADR-016).
-        "method_version": request.app.state.method_version,
+        # distintas sin avisar (ADR-016). Si el operador movió umbrales, la
+        # huella es la de esa corrida, no la del defecto.
+        "method_version": method_version,
         "app_version": __version__,
         # Quién la subió (ADR-017). Sin login activo queda ausente.
         "owner": user.as_owner() if user else None,
@@ -81,6 +117,9 @@ def create_inspection(
     }
     # La traza visual viaja como ficha; los píxeles se guardan aparte.
     payload["trace"]["layers"] = [layer.to_dict() for layer in result.layers]
+    # Solo lo que se movió, para poder repetir la corrida desde el registro
+    # descargado sin arrastrar los nueve valores del catálogo.
+    payload["trace"]["tuning"] = adjust.changed()
 
     record = _repository(request).save(
         encode_png(upload.photo.image),

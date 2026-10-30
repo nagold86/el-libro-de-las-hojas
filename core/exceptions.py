@@ -29,3 +29,7 @@ class NotALeaf(LeafError):
 
 class InspectionNotFound(LeafError):
     """No existe una inspección con ese identificador."""
+
+
+class InvalidTuning(LeafError):
+    """Los umbrales pedidos no son números o quedan fuera de su rango."""

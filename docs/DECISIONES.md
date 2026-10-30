@@ -6,6 +6,273 @@ por Gandalf y aprobada por quien resulte afectado.
 
 ---
 
+## ADR-023 — La compuerta juzga el tejido del recorte, no el verde de la escena
+
+**Contexto.** El aislamiento aprendió a recortar por contraste con el fondo y dejó
+de suponer que la hoja es verde (ADR-020). La compuerta, en cambio, seguía
+pidiendo exceso de verde, superficie verde y matiz verde. Son tres rasgos que en
+una hoja sana se cumplen juntos y en una hoja seca se incumplen juntos: con
+`allowed_violations = 1` bastaba que el tejido no fuera verde para rechazar la
+foto con `422 IMAGE_NOT_A_LEAF` («verde insuficiente»). Sobre las fotos de hoja
+entera del banco externo el resultado era el peor posible: las dos hojas más
+curadas se rechazaban y las dos más verdes pasaban.
+
+Segundo problema, más silencioso: la varianza local se medía en una ventana de
+5×5 píxeles sobre la imagen tal como venía. La misma hoja fotografiada a 165 px
+medía 714 y a 1800 px medía 283: el límite superior de 400 no describía el
+tejido, describía la resolución del archivo. Con ese límite, cualquier foto chica
+quedaba a un rasgo del rechazo.
+
+**Decisión.**
+
+- **El color es una familia, no un color.** Se reemplazan `min_exg`,
+  `min_green_fraction` y `min_green_hue_fraction` por un único
+  `min_tissue_fraction`: fracción del recorte con matiz en `[5, 95]` de OpenCV
+  (del ocre al verde azulado) y saturación ≥ 40. Una hoja sana, una clorótica y
+  una curada caen dentro; el cielo, el papel y la pared sin croma quedan afuera.
+  El ExG medio se sigue publicando como lectura de apoyo, pero ya no decide.
+- **La textura se mide a tamaño de referencia.** Antes de calcular varianza y
+  entropía, el recorte se lleva a 600 px del lado menor (`INTER_AREA` si achica,
+  `INTER_LINEAR` si agranda) junto con su máscara válida. Agrandar suaviza el
+  grano de una foto chica y achicar promedia el de una grande, así que un tejido
+  parecido mide parecido: sobre el banco externo, 129–312 en lugar de 714–1815
+  para las mismas hojas.
+- **El peso del rechazo pasa a la textura.** Una pared o un cielo limpio son lisos
+  (textura plana) y una imagen de un solo nivel no tiene nervaduras que medir
+  (entropía fuera de rango). Ese es el control que sostiene la compuerta ahora
+  que el color dejó de exigir verde.
+- **Los siete valores de la envolvente son ajustables.** Entran al catálogo de
+  ADR-022 en el grupo «compuerta», anidados en
+  `PipelineSettings.domain_thresholds` para no cambiar la forma del ajuste:
+  `Tuning.to_settings()` los separa y los aplica con `replace`. Una combinación
+  imposible —textura mínima mayor que la máxima— sale como `InvalidTuning`
+  (`422 INVALID_THRESHOLDS`) y no como error interno.
+
+**Consecuencias.**
+
+- Las hojas curadas dejan de rechazarse: sobre el banco externo pasan las cinco,
+  con `tissue_fraction` entre 0,54 y 1,00 y textura entre 129 y 312.
+- `envelope_v1` conserva su nombre porque el contrato lo publica, pero sus rasgos
+  cambian; por eso cambió la huella del método y cada registro viejo queda
+  identificado con la suya (ADR-016).
+- El ruido blanco ya no lo corta la compuerta sino el aislamiento, que no
+  encuentra forma que recortar (`sin_hoja`). Es el reparto correcto: la compuerta
+  opina sobre un recorte de hoja, no sobre el sensor.
+- Se acepta una pérdida de protección: una superficie parda con forma de hoja
+  —una mesa de madera clara— podría pasar la compuerta. Se prefiere eso a exigir
+  verde, que rechazaba el producto.
+
+**Alternativas descartadas.** Exponer los umbrales viejos sin tocar el criterio:
+habría destrabado la foto de hoy y dejado el criterio equivocado adentro, con el
+operario bajando el mínimo de verde lote por lote. Hacer que la compuerta juzgue
+la forma del objeto aislado: pide mover la etapa y rompe el orden de la traza que
+fija el contrato.
+
+---
+
+## ADR-022 — Los umbrales se ajustan por corrida, no se editan en el código
+
+**Contexto.** Los umbrales del método vivían dentro de `PipelineSettings` y solo
+se cambiaban tocando el código, con dos consecuencias: cada lote atípico pedía un
+deploy, y la huella del método (ADR-016) cambiaba sin que nadie supiera por qué.
+Abrirlos a ciegas rompe el contrato en dos formas: una corrida sin traza de lo que
+se movió no se puede repetir, y un valor absurdo puede dejar el pipeline midiendo
+basura o levantando un `ValueError` que la API devuelve como `500`.
+
+**Decisión.**
+
+- **Un catálogo, una verdad.** `core/tuning.py` declara los parámetros
+  ajustables con rango, paso, unidad, grupo y explicación en castellano
+  (`PARAMETERS`). `GET /api/thresholds` publica el catálogo junto con los defectos
+  resueltos desde `PipelineSettings`: la pantalla no repite rangos, los consume.
+  (Dieciséis desde ADR-023.)
+- **El ajuste no toca la estructura.** `Tuning.to_settings()` devuelve un
+  `PipelineSettings` completo con lo movido aplicado. Lo que no está en el
+  catálogo —la histéresis, el orden de las etapas— no se puede mover desde afuera:
+  se ajusta cuánto, no cómo. (La compuerta de dominio se sumó al catálogo en
+  ADR-023.)
+- **Se valida al entrar.** `Tuning.from_json` (HTTP) y `from_public` (registro
+  guardado) lanzan `InvalidTuning`, que el manejador traduce a
+  `422 INVALID_THRESHOLDS` con el nombre del parámetro y su rango. Un `null`
+  significa «defecto»; una clave desconocida se rechaza cuando llega del cliente
+  y se ignora cuando se relee un registro viejo.
+- **Cada corrida se firma con su huella.** Con ajustes, la API arma un
+  `LeafInspector` aparte con `build_pipeline(settings)` y calcula
+  `method_fingerprint(settings)`: el registro guarda la huella de esa corrida. El
+  inspector de la aplicación no se toca, así que dos pedidos no se contaminan.
+- **El registro guarda lo movido, no el catálogo.** `trace.tuning` lleva solo los
+  valores distintos del defecto (vacío = corrida por defecto). Con eso `/media`
+  rearma el mismo pipeline (`inspector_for`) y el overlay regenerado sigue siendo
+  byte a byte el que se vio; si el ajuste guardado ya no se puede reconstruir, se
+  avisa por log y se cae al defecto antes que romper la descarga.
+- **Viaja como campo de formulario.** `POST /api/inspections` acepta un campo
+  `tuning` de texto con el JSON al lado del archivo (`multipart`). Un campo
+  hermano del archivo no obliga a cambiar el tipo de contenido ni a subir dos
+  veces.
+
+**Consecuencias aceptadas.** Dos corridas de la misma foto con umbrales distintos
+son dos registros y dos huellas: el informe del lote (ADR-016) las separa en vez
+de promediarlas. Un ajuste guardado que ya no cierra degrada la descarga del
+overlay a los defectos y el PNG puede no coincidir con el que se midió, y por eso
+se avisa. Un pedido ajustado construye un inspector que se descarta al terminar:
+el costo es de milisegundos y la alternativa era un inspector mutable compartido.
+
+**Alternativas descartadas.** (a) Un `POST /api/thresholds` que persista el
+ajuste global: convertiría un cambio de exploración en un cambio de método para
+todos, y el archivo histórico quedaría midiendo con otra regla sin decirlo. (b)
+Umbrales por variables de entorno: siguen necesitando un redeploy. (c) Aceptar
+cualquier número y recortarlo al rango en silencio: el operador creería que midió
+con lo que pidió. (d) Guardar el catálogo entero en cada registro: el `trace`
+crecería con nueve valores repetidos y la comparación entre corridas se volvería
+ruidosa.
+
+**Reversibilidad.** Alta. Sin el campo `tuning` la ruta se comporta como antes, y
+un registro sin `trace.tuning` se rehace con el inspector de la aplicación.
+
+---
+
+## ADR-021 — Dos evidencias para una mancha, y las nervaduras antes que ellas
+
+**Contexto.** ADR-007 marcaba mancha con un solo criterio de color: el índice de
+pardeamiento `(R−G)/(R+G)` por encima de un umbral. Funcionaba con la muestra y
+falla con lo que llega de campo: una mancha oscura sin corrimiento de tono apenas
+mueve el índice, y la red de nervaduras —más oscura que la lámina— entraba en la
+máscara como si fuera lesión.
+
+**Decisión.**
+
+- **Las nervaduras se detectan primero.** `VeinEnhancer` combina *black-hat* y
+  *top-hat* a dos escalas, umbraliza contra el percentil pedido y filtra por
+  elongación: una vena es fina y alargada, una mancha es compacta. El resultado
+es una máscara de venas y, derivada, una `vein_guard` dilatada que el crecimiento
+  de la mancha no puede cruzar.
+- **Dos evidencias, no una.** Una mancha se propone si el pardeamiento supera
+  `redness_threshold` **o** si el píxel es oscuro a escala local —la relación
+  mínima entre dos suavizados gaussianos frente al fondo cercano— y a la vez
+  pardo o acromático, que es el guardián que evita contar sombras neutras.
+  `darkness_threshold = 0` apaga esa segunda evidencia y reproduce el método
+  anterior.
+- **Crecimiento con tope.** Los píxeles propuestos son semillas; una histéresis
+  las expande a los vecinos que ya estaban cerca del umbral, con profundidad
+  limitada (`hysteresis_max_growth_px`) y prohibida sobre `vein_guard`. Así una
+  mancha de borde difuso se cierra sin invadir la vena.
+- **Sin tejido sano no se inventa un umbral.** Si el anillo sano queda vacío
+  —una hoja enferma entera— la histéresis se apaga y se mide con el umbral
+  nominal, en vez de calcular una mediana sobre una muestra vacía.
+
+**Consecuencias aceptadas.** El segmentador necesita las venas antes y después,
+así que corre dos veces: cuesta menos que una máscara que se come la nervadura.
+`darkness_threshold` es el parámetro más delicado del catálogo: subirlo recorta
+manchas de bajo contraste, bajarlo mete sombras. Un píxel oscuro y pardo a la vez
+cuenta una sola vez, así que el conteo no se duplica por tener dos evidencias.
+
+**Alternativas descartadas.** (a) Umbral adaptativo global (Otsu sobre el índice):
+con dos poblaciones muy desiguales —poca mancha, mucha hoja— el corte se va al
+lado de la mayor y borra la lesión. (b) Segmentar por color en HSV: el pardeamiento
+no está en el tono sino en la relación R/G, y el tono del tejido seco se confunde
+con el de la mancha. (c) Filtrar las venas después de tener las manchas: la vena
+ya estaba dentro de la máscara y la resta deja anillos huecos. (d) Aprender el
+umbral por hoja: es un modelo, y ADR-002 lo tiene fuera del alcance.
+
+**Reversibilidad.** Alta, en las dos direcciones: `darkness_threshold = 0` apaga
+la segunda evidencia y el defecto de `redness_threshold` deja las manchas pardas
+como antes. La barrera de venas se controla con `vein_percentile` y `vein_kernel`.
+
+---
+
+## ADR-020 — El fondo se descarta por contraste, no por ser verde
+
+**Contexto.** El aislamiento de ADR-008 daba por sentado que la hoja estaba sobre
+una mesa oscura y que era lo único verde de la imagen: segmentaba por exceso de
+verde y recortaba al rectángulo de la hoja. Con imágenes de campo eso se cae en
+los tres casos frecuentes: hoja marchita sobre fondo claro, hoja sobre una
+superficie también verde, y foto con el fondo casi del color de la hoja.
+
+**Decisión.**
+
+- **El borde manda.** Se muestrea un anillo de píxeles pegado al marco, se toma la
+  mediana en Lab como color de fondo y la desviación absoluta mediana como
+  dispersión. Cada píxel se mide como distancia normalizada a ese fondo: lo que se
+  parece al marco es fondo, sin importar de qué color sea.
+- **El verde es un rescate, no el criterio.** El prior de exceso de verde (y su
+  versión en HSV) solo se usa cuando el contraste por borde no alcanza a proponer
+  nada. Que la hoja tenga manchas pardas o esté amarilla deja de ser un problema.
+- **Tres descartes sobre los componentes.** Se tiran por área mínima, por tocar
+  el borde del marco y por **cuerpo**: un componente tiene que admitir un disco
+  inscrito de radio razonable (`MIN_BODY_FRACTION` sobre el lado menor). El filtro
+  de cuerpo es el que separa una hoja de un texto o una barra fina: una raya de
+  8 px de alto pasaba el filtro de relación de aspecto y ahora no pasa.
+- **Refinado y recorte.** GrabCut pule el contorno con el rectángulo del
+  componente ganador como semilla, se rellenan los huecos y se recorta con 2 % de
+  margen. El recorte es lo que hace que las máscaras y la imagen del resultado
+  midan lo mismo.
+- **La compuerta no cambia.** Si nada sobrevive, el resultado es «sin hoja» y la
+  API responde 422: el mismo contrato de ADR-008, con otro criterio detrás.
+
+**Consecuencias aceptadas.** Una imagen ya recortada al ras de la hoja —sin marco
+de fondo— produce un anillo de borde que es hoja, y el aislamiento puede descartar
+todo: el 422 es correcto, pero conviene que el mensaje pida margen. Sobre fondo muy
+texturado (madera, tela) la dispersión del anillo sube, el umbral de distancia se
+relaja y el recorte puede incluir algo de fondo; el margen del 2 % absorbe lo que
+no llega al contorno.
+
+**Alternativas descartadas.** (a) Seguir con el prior de verde y sumarle umbrales
+por imagen: cada caso nuevo pedía otra regla. (b) Detectar el objeto más grande
+por contorno: un fondo texturado también tiene contornos grandes. (c) Pedirle al
+usuario que recorte a mano: no escala y mueve el problema al operador. (d) Un
+modelo de segmentación: ADR-002.
+
+**Reversibilidad.** Media. El criterio de borde se controla con
+`isolation_sensitivity` desde la pantalla; volver al prior de verde exigiría
+reordenar el aislamiento, no solo un valor.
+
+---
+
+## ADR-019 — El overlay final va anotado: contornos, número por mancha y leyenda
+
+**Contexto.** El overlay de ADR-010 mezclaba tres máscaras con transparencia. Se
+veía dónde había color, pero no dónde terminaba una mancha ni cuál era cuál: dos
+manchas vecinas se leían como una sola, el número del panel no tenía a qué
+apuntar, y con la clorosis y las venas encima el ojo no distinguía la capa.
+
+**Decisión.**
+
+- **Un modo, no un reemplazo.** `render_overlay(..., annotate=False)` sigue
+  devolviendo exactamente el PNG de antes; `annotate=True` agrega la anotación
+  encima. Los tests de tono y forma (ADR-010) no cambian, y las capas de la traza
+  siguen siendo imágenes limpias.
+- **Contorno por mancha.** Cada mancha detectada se dibuja con su contorno a
+  trazo firme y se numera en orden de área decreciente, con el número puesto en
+  el punto de mayor distancia al borde de su propia mancha: la etiqueta no cae
+  sobre el borde ni fuera de la lesión.
+- **Leyenda dentro de la imagen.** Un plato opaco en una esquina lista las capas
+  presentes —`lesion`, `nervadura`, `clorosis`— con su muestra de color. Lo que no
+  está en la corrida no aparece en la leyenda.
+- **El tamaño no cambia.** La anotación se dibuja dentro del mismo lienzo: el
+  contrato «el PNG del resultado mide lo mismo que la imagen analizada» sigue
+  valiendo.
+- **Hasta 24 manchas numeradas.** Más que eso no se lee a tamaño de pulgar y
+  numerar el ruido no informa: se dibujan los contornos igual, la numeración se
+  corta.
+
+**Consecuencias aceptadas.** La anotación tapa píxeles de la lesión: la imagen
+sirve para mostrar, no para volver a medir —para eso están las capas sueltas y la
+traza—. La leyenda ocupa una esquina, así que una mancha justo ahí queda
+parcialmente tapada. El número sigue el orden de área, no el orden en que se
+detectaron: si se mueve un umbral, la numeración se reacomoda.
+
+**Alternativas descartadas.** (a) Anotar siempre: rompe los tests de tono y
+ensucia la traza, donde cada capa es una imagen limpia. (b) Etiquetas fuera del
+lienzo, en un margen nuevo: cambia el tamaño del PNG y rompe la coincidencia con
+las máscaras. (c) Solo la leyenda, sin contornos: no responde «dónde». (d)
+Guardar el overlay anotado como una capa más: duplica bytes que ya se pueden
+regenerar.
+
+**Reversibilidad.** Alta. Es un argumento con defecto `False`: el modo limpio
+existe y no cuesta nada.
+
+---
+
 ## ADR-018 — Cada operador ve sus hojas; el administrador ve el almanaque
 
 **Contexto.** ADR-017 dejó un archivo compartido: cualquier operador con sesión
@@ -668,6 +935,11 @@ inyectable, y `LeafInspector(domain_gate=...)` permite sustituirlo.
 **Afecta a.** Boromir (dueño de la compuerta), Aragorn (orden del pipeline y
 contrato), Legolas (recibe solo imágenes dentro de dominio), Celebrimbor
 (mensaje de error legible en pantalla).
+
+**Vigencia.** Los rasgos de color descritos acá (ExG medio, fracción verde,
+fracción de matiz verde) y la ventana fija de 5×5 fueron reemplazados por
+ADR-023. El resto de la decisión —envolvente one-class, seis rasgos, tolerancia
+de una falta, `422` con el motivo nombrado— sigue vigente.
 
 ---
 

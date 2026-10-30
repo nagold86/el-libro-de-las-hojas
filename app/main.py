@@ -21,6 +21,7 @@ from app.media import router as media_router
 from app.repository import InspectionRepository
 from app.routers import auth as auth_router
 from app.routers import inspections, reports
+from app.routers import thresholds as thresholds_router
 from app.routers import versions as versions_router
 from app.schemas import ConfigOut, HealthOut
 from app.security import require_user
@@ -112,6 +113,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(inspections.router, dependencies=guards)
     app.include_router(reports.router, dependencies=guards)
+    # El catálogo de umbrales es la única fuente de rangos de la pantalla
+    # (ADR-022): se sirve antes de cualquier análisis.
+    app.include_router(thresholds_router.router, dependencies=guards)
     app.include_router(versions_router.router, dependencies=guards)
 
     @app.get("/api/health", response_model=HealthOut, tags=["meta"], summary="Estado del servicio")

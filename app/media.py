@@ -2,10 +2,15 @@
 regenera (ADR-016).
 
 El registro guarda un solo PNG —el original— y publica URLs para el overlay y
-las 17 capas. Este módulo las produce cuando alguien las pide, reusando el mismo
+sus capas. Este módulo las produce cuando alguien las pide, reusando el mismo
 pipeline: como es determinista, la imagen servida coincide con la que se vio al
 crear el registro. El resultado se recuerda en memoria del proceso para no
 recalcular en cada recarga; en serverless la caché vive lo que vive la instancia.
+
+El pipeline con el que se rehace no es siempre el de la aplicación: si el
+registro se creó con umbrales movidos, el mismo PNG del overlay exige el mismo
+ajuste. El registro guarda lo que se movió y acá se vuelve a armar el inspector
+(ADR-022); sin ajustes se usa el de la aplicación y no se paga nada.
 
 Con login activo, la descarga también respeta el dueño: la imagen de una hoja
 ajena responde 404 igual que una inexistente (ADR-018).
@@ -17,16 +22,19 @@ import logging
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from app.security import can_see, current_user
-from core.exceptions import InspectionNotFound
+from core.exceptions import InspectionNotFound, InvalidTuning
 from core.io import encode_png, read_photo
 from core.layers import LAYER_KEY_PATTERN
 from core.orchestrator import LeafInspector
+from core.pipeline import build_pipeline
 from core.render import render_overlay, to_rgb
+from core.tuning import Tuning
 
 logger = logging.getLogger("fellowship.media")
 
@@ -54,16 +62,42 @@ def render(original_png: bytes, inspector: LeafInspector) -> RenderedRecord:
     """Vuelve a correr el pipeline sobre el original guardado."""
     photo = read_photo(original_png)
     result = inspector.inspect(photo.image)
+    # Anotado, igual que al crear el registro: el overlay guardado y el servido
+    # tienen que ser el mismo PNG (ADR-019).
     overlay = render_overlay(
         result.image,
         result.lesion_mask,
         result.vein_mask,
         chlorosis_mask=result.chlorosis_mask,
+        annotate=True,
     )
     layers: dict[str, bytes] = {}
     for layer in result.layers:
         layers[layer.key] = encode_png(to_rgb(layer.image))
     return RenderedRecord(result=encode_png(overlay), layers=layers)
+
+
+def inspector_for(request: Request, record: dict[str, Any]) -> LeafInspector:
+    """Inspector con el que se midió el registro, no el que corra hoy.
+
+    Lo guardado es solo lo movido (``trace.tuning``). Si ese ajuste ya no se
+    puede reconstruir —un parámetro que se retiró del catálogo, un valor que
+    ahora cae fuera de rango— se avisa y se cae al defecto: una imagen vieja no
+    puede dejar la descarga en error.
+    """
+    trace = record.get("trace") or {}
+    try:
+        tuning = Tuning.from_public(trace.get("tuning"))
+    except InvalidTuning:
+        logger.warning(
+            "Umbrales guardados fuera de catálogo en %s; se usa el defecto",
+            record.get("id"),
+            exc_info=True,
+        )
+        tuning = Tuning()
+    if tuning.is_default():
+        return request.app.state.inspector
+    return LeafInspector(pipeline=build_pipeline(tuning.to_settings()))
 
 
 class MediaCache:
@@ -129,17 +163,15 @@ def media(filename: str, request: Request) -> Response:
 
     store = request.app.state.repository
     user = current_user(request)
-    if user is not None and not user.is_admin:
-        # Antes de generar nada: si la hoja es de otro, no existe para este
-        # usuario. Se usa el mismo mensaje que un identificador desconocido.
-        try:
-            record = store.get(identifier)
-        except InspectionNotFound as exc:
-            raise _not_found(str(exc), code="INSPECTION_NOT_FOUND") from exc
-        if not can_see(record, user):
-            raise _not_found(
-                f"No existe la inspección {identifier}.", code="INSPECTION_NOT_FOUND"
-            )
+    # El registro se pide siempre: antes solo hacía falta para el alcance, ahora
+    # también para saber con qué umbrales regenerar.
+    try:
+        record = store.get(identifier)
+    except InspectionNotFound as exc:
+        raise _not_found(str(exc), code="INSPECTION_NOT_FOUND") from exc
+    if not can_see(record, user):
+        # Mismo mensaje que un identificador desconocido: no se delata que existe.
+        raise _not_found(f"No existe la inspección {identifier}.", code="INSPECTION_NOT_FOUND")
 
     try:
         original = store.original_bytes(identifier)
@@ -150,7 +182,7 @@ def media(filename: str, request: Request) -> Response:
         return _png(original)
 
     rendered = request.app.state.media_cache.rendered(
-        identifier, original, request.app.state.inspector
+        identifier, original, inspector_for(request, record)
     )
     if key is None:
         return _png(rendered.result)

@@ -18,7 +18,7 @@ from core.isolation import LeafIsolator
 from core.morphometry import DefectMeasurer, Measurer
 from core.preprocess import Preprocessor, StandardPreprocessor
 from core.quality import QualityGate
-from core.segmentation import LesionSegmenter, Segmenter
+from core.segmentation import LesionSegmenter, Segmenter, VeinEnhancer
 from core.version import __version__
 
 
@@ -32,6 +32,15 @@ class PipelineSettings:
     isolation_max_side: int = 1100
     isolation_closeup_fraction: float = 0.97
     isolation_min_leaf_fraction: float = 0.005
+    # Cuánta diferencia de color con el fondo hace falta para llamar hoja a un
+    # píxel (ADR-020). 1.0 es el criterio calibrado; más alto recorta más fino.
+    isolation_sensitivity: float = 1.0
+    # Pardeamiento: píxel donde el rojo iguala o supera al verde.
+    redness_threshold: float = 0.0
+    # Oscurecimiento: caída de luminancia respecto de su entorno o del tejido
+    # sano. 0 lo apaga y deja solo el criterio de color.
+    darkness_threshold: float = 0.35
+    darkness_scale_fraction: float = 0.015
     min_lesion_area_fraction: float = 0.0002
     # Histéresis del segmentador (ADR-014): el umbral estricto siembra y el bajo
     # recupera el halo. ``hysteresis=False`` reproduce la máscara de un umbral.
@@ -39,6 +48,9 @@ class PipelineSettings:
     hysteresis_fraction: float = 0.5
     hysteresis_max_growth_px: int = 8
     hysteresis_max_drop: float = 0.15
+    # Nervaduras: cresta clara u oscura sobre el canal verde.
+    vein_kernel: int = 9
+    vein_percentile: float = 97.0
     # Clorosis (ADR-015): familia aparte del pardo. Mide pérdida de verde, no rojo.
     chlorosis_hue_threshold: float = 0.85
     chlorosis_min_chroma: float = 10.0
@@ -87,6 +99,7 @@ def build_pipeline(settings: PipelineSettings | None = None) -> Pipeline:
             max_side=config.isolation_max_side,
             closeup_fraction=config.isolation_closeup_fraction,
             min_leaf_fraction=config.isolation_min_leaf_fraction,
+            sensitivity=config.isolation_sensitivity,
         ),
         preprocessor=StandardPreprocessor(
             clip_limit=config.clip_limit,
@@ -96,10 +109,17 @@ def build_pipeline(settings: PipelineSettings | None = None) -> Pipeline:
         domain_gate=LeafDomainGate(config.domain_thresholds),
         segmenter=LesionSegmenter(
             min_area_fraction=config.min_lesion_area_fraction,
+            redness_threshold=config.redness_threshold,
+            darkness_threshold=config.darkness_threshold,
+            darkness_scale_fraction=config.darkness_scale_fraction,
             hysteresis=config.hysteresis,
             hysteresis_fraction=config.hysteresis_fraction,
             hysteresis_max_growth_px=config.hysteresis_max_growth_px,
             hysteresis_max_drop=config.hysteresis_max_drop,
+            vein_detector=VeinEnhancer(
+                kernel_size=config.vein_kernel,
+                percentile=config.vein_percentile,
+            ),
         ),
         measurer=DefectMeasurer(),
         describer=ColorTextureDescriber(),

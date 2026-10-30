@@ -1,6 +1,6 @@
 """La ruta ``/media`` con la base atrás (ADR-016).
 
-El registro guarda un solo PNG; el overlay y las 17 capas se regeneran al pedirlas.
+El registro guarda un solo PNG; el overlay y las capas se regeneran al pedirlas.
 Estos tests prueban que lo servido es lo mismo que se vio al inspeccionar, que es
 lo único que hace aceptable no guardarlas.
 """
@@ -56,6 +56,7 @@ def test_regenerated_overlay_matches_the_inspection(
         result.lesion_mask,
         result.vein_mask,
         chlorosis_mask=result.chlorosis_mask,
+        annotate=True,
     )
 
     response = sql_client.get(body["result_url"])
