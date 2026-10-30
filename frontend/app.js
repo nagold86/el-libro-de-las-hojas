@@ -985,7 +985,8 @@ ${clone.innerHTML}
       els.login.close();
       renderSession();
       announce(`Sesión iniciada como ${user.display_name || user.username}.`);
-      await refreshArchive();
+      // El catálogo falló sin sesión al arrancar: ahora sí se puede leer.
+      await Promise.all([loadThresholds(), refreshArchive()]);
     } catch (error) {
       els.loginError.textContent = error.message;
       els.loginError.hidden = false;
@@ -1006,6 +1007,11 @@ ${clone.innerHTML}
     state.current = null;
     state.page = 0;
     state.hasMore = false;
+    // El catálogo y los ajustes no se heredan entre usuarios: sin sesión,
+    // el panel no tiene qué mostrar.
+    state.tuning.catalogue = [];
+    state.tuning.values = {};
+    renderTuning();
     // El próximo que entre empieza sin los filtros del anterior.
     state.filters = { q: "", version: "", owner: "", unassigned: false };
     els.filterQ.value = "";
@@ -2047,7 +2053,7 @@ ${clone.innerHTML}
 
   async function init() {
     bindEvents();
-    await Promise.all([loadHealth(), loadConfig(), loadThresholds()]);
+    await Promise.all([loadHealth(), loadConfig()]);
     // Con base hay que entrar antes de leer el archivo; sin base, la demo sigue
     // abierta y no hay puerta que cruzar (ADR-017).
     await loadSession();
@@ -2055,7 +2061,10 @@ ${clone.innerHTML}
       openLogin();
       return;
     }
-    await refreshArchive();
+    // El catálogo lo sirve una ruta con sesión (ADR-017): se pide recién cuando
+    // ya hay quién la tenga. Pedirlo antes del login devolvía 401 y el panel
+    // quedaba escondido para siempre, aunque después se entrara.
+    await Promise.all([loadThresholds(), refreshArchive()]);
   }
 
   init();
