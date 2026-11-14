@@ -76,6 +76,14 @@ class InspectionStore(Protocol):
 
     def get(self, identifier: str) -> dict[str, Any]: ...
 
+    def update(
+        self,
+        record: dict[str, Any],
+        *,
+        result_png: bytes | None = None,
+        layers: Iterable[tuple[str, bytes]] | None = None,
+    ) -> dict[str, Any]: ...
+
     def list(
         self,
         limit: int | None = None,

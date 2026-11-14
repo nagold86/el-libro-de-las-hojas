@@ -20,6 +20,7 @@ from app.media import MediaCache
 from app.media import router as media_router
 from app.repository import InspectionRepository
 from app.routers import auth as auth_router
+from app.routers import examples as examples_router
 from app.routers import inspections, reports
 from app.routers import thresholds as thresholds_router
 from app.routers import versions as versions_router
@@ -111,6 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(auth_router.router)
+    app.include_router(examples_router.router)
     app.include_router(inspections.router, dependencies=guards)
     app.include_router(reports.router, dependencies=guards)
     # El catálogo de umbrales es la única fuente de rangos de la pantalla

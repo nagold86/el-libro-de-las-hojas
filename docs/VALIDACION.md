@@ -483,3 +483,73 @@ Formato de cada entrada:
   hojas, nunca en archivos.
 - Nota: esta entrada describe el estado previo a la implementación; el pipeline
   quedó completo y verificado en las entradas siguientes.
+
+---
+
+## 2026-10-31 — auditoría previa de candidaturas del proyecto 2 (sin lote, sin corrida)
+
+- n: 0 hojas analizadas. **Esta entrada no audita una corrida**: audita tres
+  propuestas antes de que exista la primera línea de código. No hay APTO/NO APTO
+  de lote; hay ranking, umbrales exigidos y vetos.
+- IoU lesión: no declarable, y conviene decir por qué. En el proyecto 1 el oro
+  sigue sin ratificar: `data/golden/last-score.json` medido hoy dice
+  `scored 38 / auto 38 / human 0 / missing 13`, con IoU medio 0,7495 y peor
+  0,1886. Ese 0,75 mide desplazamiento contra la propia máquina, no acierto
+  (ADR-014, reserva del 2026-10-28). Ninguna candidatura del proyecto 2 puede
+  nacer repitiendo esa estructura: referencia producida por lo que se evalúa.
+- Herramientas de esta sesión: **sin acceso a web** (no tengo WebSearch/WebFetch,
+  y bajar recursos con `curl`/`wget` está fuera de mis reglas). Todo dato de
+  dataset o licencia queda etiquetado con su nivel de confianza y con una
+  rutina de verificación a cargo del dueño. Nada de esto está auditado por mí:
+  `[MEDIDA]` lo corrí y lo vi, `[ALTA]`/`[MEDIA]` es conocimiento que hay que
+  confirmar antes de firmar un ADR, `[POR VERIFICAR]` no lo acepto como hecho.
+- Marco medido del equipo `[MEDIDA]`: Python 3.14.3; `torch 2.14.1+cpu` con
+  `cuda.is_available() → False`; GPU presente (GTX 1650, 4096 MiB, driver
+  581.57) pero inservible para el entorno actual; i5-12500H 16 lógicos; RAM
+  15,7 GB total con **3,0 GB libres al momento de la medición**; disco D 254 GB
+  libres. Consecuencia de contrato: **ninguna inferencia pesada puede ir en la
+  ruta HTTP** de Vercel; todo modelo pesado es lote fuera de línea.
+- Traza de la trampa métrica, medida en casa: la mediana de área de lesión del
+  proyecto 1 es **0,36 %** (VER `VALIDACION.md` 2026-10-28). Un detector que no
+  marca nada acierta el 99,64 % de los píxeles. Prohibición heredada para el
+  proyecto 2: **accuracy de píxel o de imagen no es una métrica de resultado en
+  ninguna candidatura**, y quien la publique en un informe se le rechaza el lote.
+- Ranking emitido (ver detalle en el acta de sesión):
+  1. **Verdad física** (control dimensional por escáner plano, referencia con pie
+     de metro): APTA CON CONDICIÓN desde el día 1. La referencia la compra la
+     pieza, no la anotación humana.
+  2. **Contaje y morfometría con doble pista** (pista sintética exacta + pista
+     real con segundo contador): APTA CON CONDICIÓN, exige el segundo contador
+     humano o el oro es opinión.
+  3. **Defectos en superficie metálica** (NE-Steel / Severstal): **NO APTA** para
+     producto con un solo técnico; el techo es un kappa de panel que no existe.
+- Vetos registrados: clasificación de especie por forma de hoja (DL gana por
+  construcción, ya vetado en `NUEVAS_IDEAS.md` §3); retina y lesiones de piel
+  como producto (licencia no comercial `[MEDIA]` + campo saturado + exposición
+  clínica), admitidas solo como gimnasia de protocolo; cualquier candidato que
+  dependa de una API de pago (choca con la restricción de costo).
+- Umbrales que exijo pre-registrados **antes** de mirar los datos, por dirección:
+  - Verdad física: sesgo |mediana del error| ≤ 0,05 mm; SD ≤ 0,05 mm; peor caso
+    ≤ 0,15 mm; repetibilidad de reposicionamiento ≤ 0,02 mm; error de escala
+    centro-vs-esquina del vidrio ≤ 0,10 mm. Muere la promesa de metrología si el
+    peor caso o el error de esquina rompen el umbral.
+  - Contaje: MAPE de conteo ≤ 10 % en la pista real; ICC del par humano-humano
+    ≥ 0,80 (si falla, el problema es el oro, no el detector); IoU por célula con
+    peor imagen declarada siempre.
+  - Defectos metálicos: F2 por píxel y AP por clase, con recall de la clase
+    minoritaria ≥ 0,5; prohibido publicar accuracy.
+- Fuga de datos de estas candidaturas: el análogo de ADR-004 es el riesgo nº 1
+  del proyecto 2, y en todas las candidaturas aparece. Repetir la unidad de
+  muestreo por dirección, nunca el archivo: **pieza física** (verdad física),
+  **placa/pozo o animal** (contaje: las réplicas técnicas del mismo pozo son
+  hermanas), **slab o rollo** (metálica: las bandas contiguas son casi
+  duplicados). Exijo re-partir a mano cualquier división `train/test` que traiga
+  un dataset público: esa división no conoce la unidad de muestreo del proyecto.
+- Excepciones aceptadas por escrito: (a) acepto `[MEDIA]` como base para rankar,
+  con la condición de que ningún número de dataset o licencia entre en un ADR sin
+  la captura de su página de términos; (b) acepto la pista sintética como oro
+  exacto, con la condición de que jamás se publique sola: sin pista real en el
+  mismo informe, el número es una tautología.
+- Veredicto: **SIN LOTE AUDITADO** — no emito APTO. Emito ranking y prohibiciones
+  de publicación: ninguna candidatura puede declarar exactitud hasta tener su
+  referencia propia (física o humana) y su split pre-registrado.

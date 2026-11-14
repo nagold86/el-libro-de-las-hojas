@@ -83,6 +83,9 @@ def test_aggregates_totals_severity_and_worst():
         _record("moderada", 0.10, count=3, feret=50.0),
         _record("severa", 0.20, count=4, method="primer_plano", feret=60.0),
     ]
+    records[0]["chlorosis"] = {"count": 2, "area_fraction": 0.02}
+    records[1]["chlorosis"] = {"count": 1, "area_fraction": 0.06}
+    records[1]["trace"]["manual_annotations_applied"] = True
 
     validated = LotReportOut.model_validate(build_lot_report(records))
 
@@ -101,6 +104,13 @@ def test_aggregates_totals_severity_and_worst():
     assert validated.worst[0].id == "severa"
     assert validated.quality_flags == {"poca_superficie_valida": 1}
     assert validated.isolation_methods == {"grabcut": 2, "primer_plano": 2}
+    assert validated.totals.chlorosis == 3
+    assert validated.totals.mean_chlorosis_area_fraction == pytest.approx(0.02)
+    assert validated.totals.median_chlorosis_area_fraction == pytest.approx(0.01)
+    assert validated.totals.max_chlorosis_area_fraction == pytest.approx(0.06)
+    assert validated.totals.manually_edited_images == 1
+    assert validated.points[1].chlorosis_count == 1
+    assert validated.points[1].manual_annotations_applied is True
 
 
 def test_legacy_record_without_optional_data_is_readable():

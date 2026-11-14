@@ -404,9 +404,9 @@ class LesionSegmenter(Segmenter):
         - ``local``: se compara el píxel con un desenfoque de su entorno. Un
           cambio de iluminación es de baja frecuencia y se cancela; una mancha
           chica no.
-        - ``global``: se compara con la mediana del tejido sano. Rescata las
-          manchas grandes, que el entorno ya absorbió, pero solo si el píxel es
-          acromático o pardo: una sombra conserva el matiz verde de la hoja.
+                - ``global``: se compara con la mediana del tejido sano. Rescata las
+                    manchas grandes, que el entorno ya absorbió, pero solo si el píxel
+                    perdió verde respecto del tejido sano. Una sombra conserva ese matiz.
         """
         if self.darkness_threshold <= 0.0:
             return np.zeros_like(valid, dtype=np.float32)
@@ -430,22 +430,21 @@ class LesionSegmenter(Segmenter):
         if int(healthy.sum()) < 100:
             healthy = valid & ~vein_guard
         if int(healthy.sum()) < 100:
-            return local_ratio.astype(np.float32)
+            return np.zeros_like(valid, dtype=np.float32)
 
         healthy_l = float(np.median(luminance[healthy]))
-        lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB).astype(np.float32)
-        chroma = np.hypot(lab[..., 1] - 128.0, lab[..., 2] - 128.0)
-        healthy_chroma = float(np.median(chroma[healthy]))
+        rgb = image.astype(np.float32)
+        redness = (rgb[..., 0] - rgb[..., 1]) / (rgb[..., 0] + rgb[..., 1] + 1e-3)
+        healthy_redness = float(np.median(redness[healthy]))
 
         global_ratio = np.clip(
             (healthy_l - luminance) / max(healthy_l, 1.0), 0.0, 1.0
         )
-        achromatic = chroma < max(0.6 * healthy_chroma, 6.0)
-        rgb = image.astype(np.float32)
-        brownish = (rgb[..., 0] - rgb[..., 1]) > -0.02 * (rgb[..., 0] + rgb[..., 1])
-        global_dark = np.where(achromatic | brownish, global_ratio, 0.0)
+        lost_green = redness > healthy_redness + 0.08
+        local_dark = np.where(lost_green, local_ratio, 0.0)
+        global_dark = np.where(lost_green, global_ratio, 0.0)
 
-        return np.maximum(local_ratio, global_dark).astype(np.float32)
+        return np.maximum(local_dark, global_dark).astype(np.float32)
 
 
 def _ridge_response(green: np.ndarray, kernel_size: int) -> np.ndarray:

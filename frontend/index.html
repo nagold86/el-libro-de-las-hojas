@@ -27,11 +27,7 @@
           </svg>
         </span>
         <div>
-          <p class="eyebrow">Fellowship · visión clásica</p>
-          <h1>El Libro de las Hojas</h1>
-        </div>
       </div>
-      <div class="masthead-meta">
         <!-- Quién está en sesión (ADR-017). Sin base no hay usuarios y no se muestra. -->
         <span class="session" id="session" hidden>
           <span class="session-who">
@@ -85,6 +81,34 @@
           <button class="button button--primary" type="button" id="pick">Elegir imagen</button>
           <input class="visually-hidden" id="file-input" type="file" accept="image/png,image/jpeg" tabindex="-1" aria-label="Elegir una imagen PNG o JPEG">
         </div>
+        <button class="button button--ghost examples-open" type="button" id="examples-open" aria-haspopup="dialog">
+          Probar con una muestra
+        </button>
+
+        <div class="method-choice-row">
+          <label class="field method-choice" for="analysis-method">
+            <span class="field-label">Método de análisis</span>
+            <select id="analysis-method">
+              <option value="core">Core · pardeamiento y oscurecimiento</option>
+              <option value="core2">Core2 · iluminación normalizada y cromaticidad</option>
+            </select>
+          </label>
+          <button
+            class="method-guide-button"
+            type="button"
+            id="core-guide-open"
+            aria-label="Cómo funciona Core"
+            aria-haspopup="dialog"
+            title="Cómo funciona Core"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M12 7.5C9.8 5.8 6.7 5.4 3.5 6.2v12c3.2-.8 6.3-.4 8.5 1.3"/>
+              <path d="M12 7.5c2.2-1.7 5.3-2.1 8.5-1.3v12c-3.2-.8-6.3-.4-8.5 1.3"/>
+              <path d="M12 7.5v12"/>
+              <path d="M6.5 9.5c1.4-.2 2.8 0 4 .6M17.5 9.5c-1.4-.2-2.8 0-4 .6"/>
+            </svg>
+          </button>
+        </div>
 
         <!-- Umbrales (ADR-022): el operario mueve lo que se mide y repite la
              corrida sobre la misma hoja. El catálogo —rangos, pasos y textos—
@@ -101,12 +125,14 @@
           <div class="tuning-grid" id="tuning-grid"></div>
           <div class="tuning-actions">
             <button class="icon-button" type="button" id="tuning-reset">Volver al defecto</button>
-            <button class="button button--primary" type="button" id="tuning-apply" disabled>
-              Repetir el análisis
-            </button>
           </div>
-          <p class="tuning-status" id="tuning-status" role="status" aria-live="polite"></p>
         </details>
+        <div class="tuning-actions">
+          <button class="button button--primary" type="button" id="tuning-apply" disabled hidden>
+            Repetir el análisis
+          </button>
+        </div>
+        <p class="tuning-status" id="tuning-status" role="status" aria-live="polite"></p>
 
         <div class="alert" id="alert" role="alert" hidden>
           <strong>No se pudo completar.</strong>
@@ -118,6 +144,138 @@
         </p>
         <p class="visually-hidden" id="live" role="status" aria-live="polite"></p>
       </section>
+
+      <dialog class="dialog core-guide-dialog" id="core-guide" aria-labelledby="core-guide-title">
+        <form method="dialog" class="core-guide-head">
+          <div>
+            <p class="eyebrow">Guía del método</p>
+            <h2 id="core-guide-title">Cómo detecta Core</h2>
+          </div>
+          <button class="icon-button" value="close" aria-label="Cerrar guía">Cerrar</button>
+        </form>
+        <section class="core-guide-method" id="core-guide-core">
+          <p class="core-guide-intro">
+            Core es un método clásico: no aprende de imágenes ni usa un modelo entrenado. Aplica
+            las mismas reglas de color, luz y forma a cada foto. Sus dos familias de salida son
+            lesión parda/oscura y clorosis amarilla; se miden por separado.
+          </p>
+          <ol class="core-guide-steps">
+            <li>
+              <strong>1. Aísla la superficie de hoja.</strong>
+              <p>Si la foto tiene mesa o fondo, el aislamiento estima el color del borde de la imagen y busca la región principal que contrasta con él. Recorta alrededor de esa región. Si ya subiste un primer plano de la lámina, lo deja prácticamente como está. Esta etapa encuentra una superficie que parece hoja; no identifica la especie.</p>
+            </li>
+            <li>
+              <strong>2. Prepara dos vistas, pero mide solo una.</strong>
+              <p>La vista de análisis conserva el color de la foto y aplica un suavizado bilateral leve para bajar grano sin borrar bordes. El balance de blancos y el aumento local de contraste se usan solo en la vista para mirar; no cambian los números ni las máscaras.</p>
+            </li>
+            <li>
+              <strong>3. Decide si la imagen permite medir.</strong>
+              <p>Marca como no confiables los píxeles casi negros (algún canal ≤ 5) o quemados (algún canal ≥ 250). Evalúa nitidez con la variación de bordes: el valor predeterminado mínimo es 15. Si más del 20 % de los píxeles válidos está saturado, rechaza la foto. Menos del 50 % de superficie válida genera una advertencia, pero por sí sola no la rechaza.</p>
+            </li>
+            <li>
+              <strong>4. Comprueba que el recorte tenga aspecto de tejido.</strong>
+              <p>La compuerta revisa color de hoja del ocre al verde, brillo, textura y detalle. Por defecto exige al menos 45 % de tejido con color, limita el brillo casi blanco al 30 % y permite una falta entre sus rasgos. Una imagen que no parece hoja se detiene antes de contar lesiones.</p>
+            </li>
+            <li>
+              <strong>5. Encuentra las nervaduras antes que las manchas.</strong>
+              <p>En el canal verde busca líneas finas claras y oscuras con filtros morfológicos llamados sombrero blanco y sombrero negro, en dos escalas. El valor inicial usa un kernel de 9 px y el percentil 97 de respuesta. Después descarta ruido que no tenga forma de cresta. Se guarda una franja protectora alrededor de las nervaduras: no deben convertirse en lesión ni guiar el crecimiento de otra.</p>
+            </li>
+            <li>
+              <strong>6. Busca pardeamiento con una comparación de color.</strong>
+              <p>Para cada píxel calcula <code>(R − G) / (R + G)</code>. R es rojo y G es verde. Si el rojo supera al verde, el píxel pasa el umbral inicial 0 y se convierte en candidato pardo. La división reduce cuánto influye que toda la foto esté más clara u oscura.</p>
+            </li>
+            <li>
+              <strong>7. Busca necrosis oscura, con una protección contra sombras.</strong>
+              <p>Compara la luminancia del píxel con un entorno cercano y con el tejido sano de la misma hoja. El umbral inicial de oscurecimiento es 0,35. Pero ser oscuro no alcanza: el índice rojo-verde también debe apartarse al menos 0,08 del valor verde sano. Así una sombra que baja la luz pero conserva el color foliar no debería sumarse como lesión. La máscara inicial une esta señal con la de pardeamiento.</p>
+            </li>
+            <li>
+              <strong>8. Limpia puntos y conserva regiones con forma de mancha.</strong>
+              <p>Una apertura y un cierre morfológicos de 5 × 5 px quitan puntos sueltos y unen pequeños cortes. Luego analiza regiones conectadas: el tamaño mínimo inicial es el mayor entre 24 px y 0,02 % de la superficie válida; la compacidad mínima es 0,15. Las regiones descartadas no se vuelven a agregar después.</p>
+            </li>
+            <li>
+              <strong>9. Recupera un borde cercano sin inventar manchas nuevas.</strong>
+              <p>Las regiones que sobrevivieron son semillas. Desde ellas, la histéresis admite vecinos con una señal más débil, calculada respecto de la hoja sana. El crecimiento predeterminado llega como máximo a 8 px, se corta si la señal cae demasiado y no cruza la protección de nervaduras. Un borde sin semilla no aparece por sí solo.</p>
+            </li>
+            <li>
+              <strong>10. Detecta clorosis como una familia distinta.</strong>
+              <p>Convierte el color a Lab y calcula el ángulo <code>b* / (|a*| + b*)</code>: cuanto más se acerca a 1, menos verde queda el tejido. El valor inicial exige más de 0,85 y croma de al menos 10 para no contar grises. También limpia la máscara y exige regiones de al menos 60 px —o 0,05 % de la superficie válida, si es mayor— con compacidad 0,10. La clorosis se reporta aparte y no se suma al área parda.</p>
+            </li>
+            <li>
+              <strong>11. Calcula medidas y permite corregirlas.</strong>
+              <p>Cuenta componentes y calcula fracción de superficie afectada, área media, Feret máximo, circularidad y orientación, además de densidad de nervaduras. En “Corregir máscaras”, sano quita ambas clases; lesión o clorosis fuerzan su máscara; el borrador restaura la clasificación automática de esa zona. Al aplicar la corrección, las medidas y el informe se recalculan.</p>
+            </li>
+          </ol>
+          <p class="core-guide-note">Sin una referencia física, las áreas son fracciones de píxeles válidos y las longitudes son píxeles, no milímetros. Los valores citados son los predeterminados; los sliders pueden cambiarlos por corrida.</p>
+        </section>
+
+        <section class="core-guide-method" id="core-guide-core2" hidden>
+          <p class="core-guide-intro">
+            Core2 también usa reglas clásicas, sin entrenamiento ni modelo aprendido. Comparte
+            el recorte, controles de calidad y mediciones de Core, pero cambia el corazón de la
+            segmentación: estima la iluminación amplia, compensa la luminancia y usa otras reglas
+            cromáticas para lesión y clorosis.
+          </p>
+          <ol class="core-guide-steps">
+            <li>
+              <strong>1. Aísla, prepara y valida la foto.</strong>
+              <p>Usa el mismo aislamiento de hoja, máscara de píxeles confiables, suavizado de análisis y puertas de calidad y dominio que Core. El balance de blancos y el contraste mejorado siguen siendo solo visuales. Si la foto está borrosa, sobreexpuesta o no parece tejido de hoja, el análisis se detiene o deja una advertencia según la regla que falló.</p>
+            </li>
+            <li>
+              <strong>2. Detecta nervaduras y crea una zona de protección.</strong>
+              <p>Antes de segmentar lesiones, los mismos filtros de cresta buscan nervaduras claras y oscuras en dos escalas. Core2 excluye esas líneas y un pequeño borde alrededor de ellas para que no se interpreten como manchas.</p>
+            </li>
+            <li>
+              <strong>3. Estima la iluminación de fondo.</strong>
+              <p>Convierte la imagen a Lab y toma L*, que representa luminosidad. Un desenfoque gaussiano amplio estima cómo cambia la luz lentamente sobre la foto; su radio es aproximadamente 8 % del lado mayor, limitado entre 12 y 96 px. La mediana de ese campo es el nivel de referencia de la hoja.</p>
+            </li>
+            <li>
+              <strong>4. Compensa cambios amplios de luz.</strong>
+              <p>Multiplica L* por la luz de referencia y lo divide por la luz estimada en cada zona. El resultado aclara regiones con sombra amplia o baja las que tienen más luz, sin cambiar a Lab los canales de color que se usan para pardeamiento. Los valores se recortan al rango de imagen. Esto reduce variaciones suaves de iluminación; una sombra y una lesión con el mismo color todavía pueden ser indistinguibles en una foto.</p>
+            </li>
+            <li>
+              <strong>5. Toma una referencia de tejido sano.</strong>
+              <p>Entre los píxeles válidos y fuera de nervaduras, busca los que no superan el umbral pardo. Calcula la mediana de su color rojo-verde y de su L* ya normalizada. Si no hay 100 píxeles para esa referencia, usa el resto de la superficie. Si tampoco alcanza, no inventa una referencia y devuelve una máscara de lesión vacía.</p>
+            </li>
+            <li>
+              <strong>6. Marca lesiones por color o por oscuridad residual.</strong>
+              <p>El índice <code>(R − G) / (R + G)</code> supera por defecto 0,02 para proponer pardeamiento. También puede proponer una zona más oscura que la luminancia sana normalizada, con umbral 0,22, pero solo si su índice rojo-verde se separa más de 0,08 del tejido sano. La regla cromática adicional es el freno contra sombras verdes: bajar la luz por sí solo no crea una lesión.</p>
+            </li>
+            <li>
+              <strong>7. Quita ruido y regiones demasiado chicas.</strong>
+              <p>Hace apertura y cierre de 3 × 3 px. El área mínima inicial es el mayor entre 24 px y 0,02 % del área válida. También exige que el componente ocupe al menos 10 % de su rectángulo envolvente. Esto quita ruido estrecho o muy disperso antes de medir.</p>
+            </li>
+            <li>
+              <strong>8. Busca clorosis con proporciones de color.</strong>
+              <p>Divide cada canal por la suma <code>R + G + B</code>, obteniendo r, g y b: proporciones que cambian menos cuando la luz escala todos los canales. Calcula amarillo como <code>min(r, g) − b</code>, con umbral inicial 0,10, y balance verde-rojo como <code>g − r</code>, que debe estar entre −0,02 y 0,06. Ese segundo límite intenta separar amarillo de verde sano y de pardeamiento. Excluye píxeles ya marcados como lesión, limpia con apertura/cierre de 5 × 5 px y exige 60 px y compacidad mínima 0,10.</p>
+            </li>
+            <li>
+              <strong>9. Mide las dos clases por separado.</strong>
+              <p>El medidor cuenta componentes, área de lesión y clorosis respecto de la superficie válida, tamaño, Feret, circularidad, orientación y densidad de nervaduras. El informe de severidad usa el área de lesión; la clorosis se resume en su propia cifra para no mezclar fenómenos.</p>
+            </li>
+            <li>
+              <strong>10. Corrige el mapa si hace falta.</strong>
+              <p>En “Corregir máscaras”, sano elimina ambas clases; lesión y clorosis marcan su clase explícita; el borrador devuelve esa zona al resultado automático. Al aplicar, se recalculan overlay, medidas e informe. Los sliders guardan sus valores y Core2 vuelve a usarlos al abrir el registro.</p>
+            </li>
+          </ol>
+          <p class="core-guide-note">Core2 compensa cambios amplios de luz, no sombras arbitrarias ni cambios de iluminación con color distinto. Sin patrón de escala, las longitudes siguen en píxeles y las áreas son fracciones de superficie válida. Los valores citados son los predeterminados.</p>
+        </section>
+      </dialog>
+
+      <dialog class="dialog examples-dialog" id="examples-dialog" aria-labelledby="examples-title">
+        <form method="dialog" class="examples-head">
+          <div>
+            <p class="eyebrow">Conjunto de ejemplos</p>
+            <h2 id="examples-title">Elegí una hoja para probar</h2>
+          </div>
+          <button class="icon-button" value="close" aria-label="Cerrar ejemplos">Cerrar</button>
+        </form>
+        <p class="examples-intro">
+          Son imágenes originales del conjunto local. Los nombres describen lo que se ve; no son
+          diagnósticos ni anotaciones de referencia.
+        </p>
+        <p class="examples-status" id="examples-status" role="status" aria-live="polite"></p>
+        <div class="examples-grid" id="examples-grid"></div>
+      </dialog>
 
       <section class="panel result" id="result" aria-labelledby="result-title" hidden>
         <header class="panel-head panel-head--split">
@@ -166,6 +324,7 @@
 
         <footer class="result-actions">
           <a class="button button--ghost" id="original-link" href="#" target="_blank" rel="noopener">Ver original</a>
+          <button class="button button--ghost" type="button" id="annotations-open" disabled>Corregir máscaras</button>
           <button class="button button--danger" type="button" id="delete-current">Eliminar esta inspección</button>
         </footer>
       </section>
@@ -231,7 +390,6 @@
 
   <footer class="site-footer">
     <div class="rule" aria-hidden="true"><span></span></div>
-    <p>Fellowship · OpenCV + NumPy + SciPy · sin aprendizaje profundo</p>
     <p class="footer-note">La luz primero: si el ornamento compite con el dato, sobra.</p>
   </footer>
 
@@ -245,6 +403,41 @@
         <button class="button button--danger" value="confirm" id="confirm-accept">Eliminar</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog class="dialog annotation-dialog" id="annotation-editor" aria-labelledby="annotation-title">
+    <form method="dialog" class="annotation-head">
+      <div>
+        <p class="eyebrow">Medidas de esta hoja</p>
+        <h2 id="annotation-title">Corregir máscaras</h2>
+      </div>
+      <button class="icon-button" value="close" aria-label="Cerrar editor">Cerrar</button>
+    </form>
+    <div class="annotation-tools" role="toolbar" aria-label="Herramientas de anotación">
+      <label class="field">
+        <span class="field-label">Clase</span>
+        <select id="annotation-class">
+          <option value="healthy">Sano</option>
+          <option value="diseased">Lesión / enfermo</option>
+          <option value="chlorosis">Clorosis</option>
+          <option value="erase">Borrador</option>
+        </select>
+      </label>
+      <label class="field annotation-width">
+        <span class="field-label">Pincel · <output id="annotation-width-value">16 px</output></span>
+        <input id="annotation-width" type="range" min="3" max="64" value="16">
+      </label>
+      <button class="icon-button" type="button" id="annotation-undo" title="Deshacer último trazo">Deshacer</button>
+      <button class="icon-button" type="button" id="annotation-clear">Limpiar</button>
+      <button class="button button--primary" type="button" id="annotation-save">Aplicar correcciones</button>
+    </div>
+    <div class="annotation-stage">
+      <div class="annotation-viewport">
+        <img id="annotation-image" alt="Hoja en edición">
+        <canvas id="annotation-canvas" aria-label="Lienzo para marcar tejido sano o enfermo"></canvas>
+      </div>
+    </div>
+    <p class="annotation-status" id="annotation-status" role="status" aria-live="polite"></p>
   </dialog>
 
   <!-- Informe del lote: una página del almanaque, no un tablero.
@@ -304,7 +497,22 @@
             <article class="report-figure">
               <p class="report-figure-label">Área afectada mediana</p>
               <p class="report-figure-value" id="report-area-median">—</p>
+              <p class="report-figure-unit">lesión · % superficie válida</p>
+            </article>
+            <article class="report-figure">
+              <p class="report-figure-label">Clorosis total</p>
+              <p class="report-figure-value" id="report-chlorosis">—</p>
+              <p class="report-figure-unit">componentes</p>
+            </article>
+            <article class="report-figure">
+              <p class="report-figure-label">Clorosis mediana</p>
+              <p class="report-figure-value" id="report-chlorosis-median">—</p>
               <p class="report-figure-unit">% de la superficie válida</p>
+            </article>
+            <article class="report-figure">
+              <p class="report-figure-label">Hojas editadas</p>
+              <p class="report-figure-value" id="report-manual-edits">—</p>
+              <p class="report-figure-unit">con corrección manual</p>
             </article>
             <article class="report-figure report-figure--worst">
               <p class="report-figure-label">Peor hoja</p>
@@ -318,7 +526,7 @@
         <section class="report-section" aria-labelledby="report-severity-title">
           <div class="report-section-head">
             <h3 class="report-section-title" id="report-severity-title">Distribución por nivel</h3>
-            <p class="report-section-note">Cortes operativos: &lt; 1 % · 1–5 % · 5–15 % · ≥ 15 % de superficie afectada.</p>
+            <p class="report-section-note">Niveles por área de lesión; la clorosis se resume aparte.</p>
           </div>
           <div class="report-band" id="report-band" aria-hidden="true">
             <span class="report-band-seg sev--sano" id="report-band-sano"></span>
@@ -444,6 +652,8 @@
                   <th scope="col">Fecha</th>
                   <th scope="col">Lesiones</th>
                   <th scope="col">Área (%)</th>
+                  <th scope="col">Clorosis</th>
+                  <th scope="col">Clorosis (%)</th>
                   <th scope="col">Feret máx. (px)</th>
                   <th scope="col">Calidad / aislamiento</th>
                 </tr>

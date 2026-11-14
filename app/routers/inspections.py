@@ -7,17 +7,20 @@ almacén y qué registros ajenos se esconden como inexistentes (ADR-018).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 
 from app.auth import User
-from app.schemas import InspectionOut
+from app.media import inspector_for
+from app.schemas import InspectionOut, ManualAnnotationsIn
 from app.security import can_see, current_user, owner_scope
 from app.store import InspectionStore
 from app.uploads import read_upload
 from core.exceptions import InspectionNotFound
-from core.io import encode_png
+from core.io import encode_png, read_photo
+from core.manual_annotations import apply_manual_annotations
 from core.orchestrator import LeafInspector
 from core.pipeline import build_pipeline, method_fingerprint
 from core.render import render_overlay, to_rgb
@@ -38,17 +41,22 @@ def _inspector(request: Request) -> LeafInspector:
     return request.app.state.inspector
 
 
-def _for_tuning(request: Request, tuning: Tuning) -> tuple[LeafInspector, str]:
+def _for_tuning(
+    request: Request, tuning: Tuning, segmentation_method: str
+) -> tuple[LeafInspector, str]:
     """Inspector y huella del método para la corrida que se pide.
 
     Sin ajustes se reusa el de la aplicación, que ya viene armado. Con ajustes se
     arma uno aparte con la misma fábrica: mover un umbral no puede tocar la
     estructura del método, solo el valor con el que se mide (ADR-022).
     """
-    if tuning.is_default():
+    if tuning.is_default() and segmentation_method == "core":
         return _inspector(request), request.app.state.method_version
     settings = tuning.to_settings()
-    return LeafInspector(pipeline=build_pipeline(settings)), method_fingerprint(settings)
+    return (
+        LeafInspector(pipeline=build_pipeline(settings, segmentation_method)),
+        method_fingerprint(settings, segmentation_method),
+    )
 
 
 @router.post(
@@ -74,6 +82,7 @@ def create_inspection(
         None,
         description="Umbrales ajustados como objeto JSON; ausente usa los defectos",
     ),
+    method: Literal["core", "core2"] = Form("core"),  # noqa: B008
     user: User | None = Depends(current_user),
 ) -> InspectionOut:
     settings = request.app.state.settings
@@ -82,8 +91,8 @@ def create_inspection(
 
     # Los umbrales llegan como campo de formulario, no como JSON en el cuerpo: el
     # archivo viaja en multipart y este campo es su hermano (ADR-022).
-    adjust = Tuning.from_json(tuning)
-    inspector, method_version = _for_tuning(request, adjust)
+    adjust = Tuning.from_json(tuning).validate_for_method(method)
+    inspector, method_version = _for_tuning(request, adjust, method)
 
     result = inspector.inspect(upload.photo.image)
     # El overlay se dibuja sobre la imagen analizada: si el aislamiento recortó
@@ -99,7 +108,7 @@ def create_inspection(
     )
 
     payload = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         # Con qué método se midió: el informe del lote no promedia huellas
         # distintas sin avisar (ADR-016). Si el operador movió umbrales, la
         # huella es la de esa corrida, no la del defecto.
@@ -120,6 +129,7 @@ def create_inspection(
     # Solo lo que se movió, para poder repetir la corrida desde el registro
     # descargado sin arrastrar los nueve valores del catálogo.
     payload["trace"]["tuning"] = adjust.changed()
+    payload["trace"]["analysis_method"] = method
 
     record = _repository(request).save(
         encode_png(upload.photo.image),
@@ -143,7 +153,7 @@ def list_inspections(
     since: datetime | None = Query(None, description="Desde (ISO 8601)"),
     until: datetime | None = Query(None, description="Hasta (ISO 8601, excluido)"),
     q: str | None = Query(None, max_length=80, description="Busca en el nombre de archivo"),
-    user: User | None = Depends(current_user),
+    user: User | None = Depends(current_user),  # noqa: B008
 ) -> list[InspectionOut]:
     """Historial de subidas, de la más nueva a la más vieja (ADR-017).
 
@@ -179,6 +189,62 @@ def get_inspection(
         # Mismo 404 que una hoja inexistente: no se delata que existe.
         raise InspectionNotFound(f"No existe la inspección {inspection_id}.")
     return InspectionOut.model_validate(record)
+
+
+@router.put(
+    "/{inspection_id}/annotations",
+    response_model=InspectionOut,
+    summary="Guarda una referencia manual de tejido sano y enfermo",
+)
+def save_annotations(
+    request: Request,
+    inspection_id: str,
+    annotations: ManualAnnotationsIn,
+    user: User | None = Depends(current_user),
+) -> InspectionOut:
+    repository = _repository(request)
+    record = repository.get(inspection_id)
+    if not can_see(record, user):
+        raise InspectionNotFound(f"No existe la inspección {inspection_id}.")
+    inspector = inspector_for(request, record)
+    photo = read_photo(repository.original_bytes(inspection_id))
+    result = inspector.inspect(photo.image)
+    result = apply_manual_annotations(
+        result,
+        annotations.model_dump(mode="python")["strokes"],
+        inspector.pipeline.measurer,
+        inspector.pipeline.describer,
+    )
+    summary = result.to_dict()
+    record.update(
+        {
+            "lesions": summary["lesions"],
+            "chlorosis": summary["chlorosis"],
+            "appearance": summary["appearance"],
+        }
+    )
+    record["trace"]["segmentation"] = summary["trace"]["segmentation"]
+    record["trace"]["chlorosis"] = summary["trace"]["chlorosis"]
+    record["trace"]["manual_annotations_applied"] = bool(annotations.strokes)
+    record["trace"]["layers"] = [layer.to_dict() for layer in result.layers]
+    record["manual_annotations"] = {
+        **annotations.model_dump(mode="json"),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    overlay = render_overlay(
+        result.image,
+        result.lesion_mask,
+        result.vein_mask,
+        chlorosis_mask=result.chlorosis_mask,
+        annotate=True,
+    )
+    updated = repository.update(
+        record,
+        result_png=encode_png(overlay),
+        layers=[(layer.key, encode_png(to_rgb(layer.image))) for layer in result.layers],
+    )
+    request.app.state.media_cache.clear()
+    return InspectionOut.model_validate(updated)
 
 
 @router.delete(

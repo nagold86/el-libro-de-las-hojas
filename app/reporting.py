@@ -31,6 +31,8 @@ def build_lot_report(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
     veins = [point["vein_density"] for point in points]
     brownings = [point["browning_index"] for point in points]
     sharpness = [point["sharpness"] for point in points]
+    chlorosis_areas = [point["chlorosis_area_fraction"] for point in points]
+    chlorosis_counts = [point["chlorosis_count"] for point in points]
 
     severity_counts = {key: 0 for key, _, _, _ in SEVERITY_BINS}
     for point in points:
@@ -75,6 +77,13 @@ def build_lot_report(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "mean_vein_density": _mean(veins),
             "mean_browning_index": _mean(brownings),
             "mean_sharpness": _mean(sharpness),
+            "chlorosis": sum(chlorosis_counts),
+            "mean_chlorosis_area_fraction": _mean(chlorosis_areas),
+            "median_chlorosis_area_fraction": _median(chlorosis_areas),
+            "max_chlorosis_area_fraction": max(chlorosis_areas) if chlorosis_areas else 0.0,
+            "manually_edited_images": sum(
+                1 for point in points if point["manual_annotations_applied"]
+            ),
         },
         "severity": severity,
         "dominant_severity": dominant,
@@ -91,6 +100,7 @@ def _point(record: dict[str, Any]) -> dict[str, Any]:
     image = record.get("image") or {}
     quality = record.get("quality") or {}
     lesions = record.get("lesions") or {}
+    chlorosis = record.get("chlorosis") or {}
     appearance = record.get("appearance") or {}
     trace = record.get("trace") or {}
     isolation = trace.get("isolation") or {}
@@ -103,6 +113,9 @@ def _point(record: dict[str, Any]) -> dict[str, Any]:
         "filename": str(image.get("filename", "")),
         "created_at": record.get("created_at") or datetime.now(timezone.utc),
         "area_fraction": _float(lesions.get("area_fraction")),
+        "chlorosis_area_fraction": _float(chlorosis.get("area_fraction")),
+        "chlorosis_count": _int(chlorosis.get("count")),
+        "manual_annotations_applied": bool(trace.get("manual_annotations_applied")),
         "lesion_count": _int(lesions.get("count")),
         "max_feret_px": _float(lesions.get("max_feret_px")),
         "mean_circularity": _float(lesions.get("mean_circularity")),

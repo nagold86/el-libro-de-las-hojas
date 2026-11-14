@@ -31,6 +31,11 @@
     hasMore: false,
     // Catálogo de umbrales y valores que muestra el panel (ADR-022).
     tuning: { catalogue: [], defaults: {}, values: {} },
+    annotationStrokes: [],
+    annotationDrawing: false,
+    annotationImage: null,
+    examples: [],
+    examplesLoaded: false,
   };
 
   const els = {
@@ -40,6 +45,16 @@
     pick: document.getElementById("pick"),
     input: document.getElementById("file-input"),
     dropHint: document.getElementById("drop-hint"),
+    analysisMethod: document.getElementById("analysis-method"),
+    coreGuideOpen: document.getElementById("core-guide-open"),
+    coreGuide: document.getElementById("core-guide"),
+    coreGuideTitle: document.getElementById("core-guide-title"),
+    coreGuideCore: document.getElementById("core-guide-core"),
+    coreGuideCore2: document.getElementById("core-guide-core2"),
+    examplesOpen: document.getElementById("examples-open"),
+    examplesDialog: document.getElementById("examples-dialog"),
+    examplesGrid: document.getElementById("examples-grid"),
+    examplesStatus: document.getElementById("examples-status"),
     tuningPanel: document.getElementById("tuning"),
     tuningGrid: document.getElementById("tuning-grid"),
     tuningBadge: document.getElementById("tuning-badge"),
@@ -64,6 +79,17 @@
     trace: document.getElementById("trace-json"),
     originalLink: document.getElementById("original-link"),
     deleteCurrent: document.getElementById("delete-current"),
+    annotationsOpen: document.getElementById("annotations-open"),
+    annotationDialog: document.getElementById("annotation-editor"),
+    annotationImage: document.getElementById("annotation-image"),
+    annotationCanvas: document.getElementById("annotation-canvas"),
+    annotationClass: document.getElementById("annotation-class"),
+    annotationWidth: document.getElementById("annotation-width"),
+    annotationWidthValue: document.getElementById("annotation-width-value"),
+    annotationUndo: document.getElementById("annotation-undo"),
+    annotationClear: document.getElementById("annotation-clear"),
+    annotationSave: document.getElementById("annotation-save"),
+    annotationStatus: document.getElementById("annotation-status"),
     ledgerList: document.getElementById("ledger-list"),
     ledgerCount: document.getElementById("ledger-count"),
     ledgerEmpty: document.getElementById("ledger-empty"),
@@ -118,6 +144,9 @@
     reportImages: document.getElementById("report-images"),
     reportLesions: document.getElementById("report-lesions"),
     reportAreaMedian: document.getElementById("report-area-median"),
+    reportChlorosis: document.getElementById("report-chlorosis"),
+    reportChlorosisMedian: document.getElementById("report-chlorosis-median"),
+    reportManualEdits: document.getElementById("report-manual-edits"),
     reportWorstArea: document.getElementById("report-worst-area"),
     reportWorstName: document.getElementById("report-worst-name"),
     reportHistogram: document.getElementById("report-histogram"),
@@ -629,6 +658,18 @@
     areaCell.className = "is-number";
     areaCell.textContent = format.num(area * 100);
 
+    const chlorosisCountCell = document.createElement("td");
+    chlorosisCountCell.dataset.label = "Clorosis";
+    chlorosisCountCell.className = "is-number";
+    chlorosisCountCell.textContent = format.int(Math.max(0, Number(point.chlorosis_count) || 0));
+
+    const chlorosisAreaCell = document.createElement("td");
+    chlorosisAreaCell.dataset.label = "Clorosis (%)";
+    chlorosisAreaCell.className = "is-number";
+    chlorosisAreaCell.textContent = format.num(
+      Math.max(0, Number(point.chlorosis_area_fraction) || 0) * 100
+    );
+
     const feretCell = document.createElement("td");
     feretCell.dataset.label = "Feret máx. (px)";
     feretCell.className = "is-number";
@@ -640,7 +681,16 @@
     const qualityText = flags.length ? flags.map(formatFlag).join(", ") : "sin advertencias";
     qualityCell.textContent = `${qualityText} · ${formatMethod(point.isolation_method)}`;
 
-    row.append(nameCell, dateCell, lesionsCell, areaCell, feretCell, qualityCell);
+    row.append(
+      nameCell,
+      dateCell,
+      lesionsCell,
+      areaCell,
+      chlorosisCountCell,
+      chlorosisAreaCell,
+      feretCell,
+      qualityCell
+    );
     return row;
   }
 
@@ -692,6 +742,11 @@
     els.reportAreaMedian.textContent = format.num(
       (Number(totals.median_area_fraction) || 0) * 100
     );
+    els.reportChlorosisMedian.textContent = format.num(
+      (Number(totals.median_chlorosis_area_fraction) || 0) * 100
+    );
+    els.reportChlorosis.textContent = format.int(totals.chlorosis || 0);
+    els.reportManualEdits.textContent = format.int(totals.manually_edited_images || 0);
 
     const worst = Array.isArray(report.worst) && report.worst.length ? report.worst[0] : null;
     if (worst) {
@@ -1209,6 +1264,13 @@ ${clone.innerHTML}
     });
   }
 
+  function resultImageUrl(record) {
+    const updatedAt = record.manual_annotations && record.manual_annotations.updated_at;
+    return updatedAt
+      ? `${record.result_url}?manual=${encodeURIComponent(updatedAt)}`
+      : record.result_url;
+  }
+
   function renderResult(record) {
     state.current = record;
     els.result.hidden = false;
@@ -1239,11 +1301,13 @@ ${clone.innerHTML}
       : "Sin advertencias de calidad. La máscara muestra las lesiones detectadas sobre la hoja analizada.";
 
     renderMetrics(record);
-    els.overlay.src = record.result_url;
+    els.overlay.src = resultImageUrl(record);
     els.overlay.alt =
       `Hoja ${record.image.filename} con ${record.lesions.count} lesiones marcadas en óxido ` +
       "y nervaduras en oro.";
     renderLayers(record);
+    els.analysisMethod.value = record.trace.analysis_method || "core";
+    els.annotationsOpen.disabled = false;
     // El panel se sincroniza con lo que midió esta corrida, no con lo que
     // quedó del intento anterior.
     syncTuning(record);
@@ -1599,7 +1663,139 @@ ${clone.innerHTML}
     }
   }
 
-  async function upload(file, tuning = {}) {
+  function drawAnnotationStrokes() {
+    const canvas = els.annotationCanvas;
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    const rootStyle = getComputedStyle(document.documentElement);
+    const colors = {
+      healthy: rootStyle.getPropertyValue("--moss-600").trim(),
+      diseased: rootStyle.getPropertyValue("--data-lesion").trim(),
+      chlorosis: rootStyle.getPropertyValue("--data-chlorosis").trim(),
+    };
+    const scale = Math.min(canvas.width, canvas.height);
+
+    state.annotationStrokes.forEach((stroke) => {
+      if (!stroke.points.length) return;
+      context.globalCompositeOperation = stroke.label === "erase" ? "destination-out" : "source-over";
+      context.globalAlpha = stroke.label === "erase" ? 1 : 0.62;
+      context.strokeStyle = colors[stroke.label] || colors.diseased;
+      context.fillStyle = context.strokeStyle;
+      context.lineWidth = Math.max(1, stroke.width * scale);
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.beginPath();
+      context.moveTo(stroke.points[0].x * canvas.width, stroke.points[0].y * canvas.height);
+      stroke.points.slice(1).forEach((point) => {
+        context.lineTo(point.x * canvas.width, point.y * canvas.height);
+      });
+      if (stroke.points.length === 1) {
+        context.arc(
+          stroke.points[0].x * canvas.width,
+          stroke.points[0].y * canvas.height,
+          Math.max(1, context.lineWidth / 2),
+          0,
+          Math.PI * 2
+        );
+        context.fill();
+      } else {
+        context.stroke();
+      }
+    });
+    context.globalAlpha = 1;
+    context.globalCompositeOperation = "source-over";
+  }
+
+  async function openAnnotationEditor() {
+    if (!state.current) return;
+    els.annotationStatus.textContent = "";
+    els.annotationImage.src = resultImageUrl(state.current);
+    try {
+      await els.annotationImage.decode();
+    } catch {
+      els.annotationStatus.textContent = "No se pudo cargar la imagen para editar.";
+      return;
+    }
+    els.annotationCanvas.width = els.annotationImage.naturalWidth;
+    els.annotationCanvas.height = els.annotationImage.naturalHeight;
+    state.annotationImage = els.annotationImage;
+    state.annotationStrokes = (state.current.manual_annotations?.strokes || []).map((stroke) => ({
+      label: stroke.label,
+      width: stroke.width,
+      points: stroke.points.map((point) => ({ x: point.x, y: point.y })),
+    }));
+    drawAnnotationStrokes();
+    els.annotationWidthValue.textContent = `${els.annotationWidth.value} px`;
+    if (!els.annotationDialog.open) els.annotationDialog.showModal();
+  }
+
+  function annotationPoint(event) {
+    const rect = els.annotationCanvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    };
+  }
+
+  function startAnnotationStroke(event) {
+    if (event.button !== 0 || !state.current) return;
+    event.preventDefault();
+    const point = annotationPoint(event);
+    state.annotationStrokes.push({
+      label: els.annotationClass.value,
+      width: Number(els.annotationWidth.value) / Math.min(
+        els.annotationCanvas.width,
+        els.annotationCanvas.height
+      ),
+      points: [point],
+    });
+    state.annotationDrawing = true;
+    els.annotationCanvas.setPointerCapture(event.pointerId);
+    drawAnnotationStrokes();
+  }
+
+  function continueAnnotationStroke(event) {
+    if (!state.annotationDrawing) return;
+    const stroke = state.annotationStrokes[state.annotationStrokes.length - 1];
+    if (stroke.points.length >= 512) return;
+    const point = annotationPoint(event);
+    const previous = stroke.points[stroke.points.length - 1];
+    if (Math.hypot(point.x - previous.x, point.y - previous.y) < 0.001) return;
+    stroke.points.push(point);
+    drawAnnotationStrokes();
+  }
+
+  function stopAnnotationStroke() {
+    state.annotationDrawing = false;
+  }
+
+  async function saveAnnotationReference() {
+    if (!state.current) return;
+    els.annotationSave.disabled = true;
+    els.annotationStatus.textContent = "Guardando…";
+    try {
+      const updated = await api(
+        `/inspections/${encodeURIComponent(state.current.id)}/annotations`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ strokes: state.annotationStrokes }),
+        }
+      );
+      const editorOpen = els.annotationDialog.open;
+      renderResult(updated);
+      await refreshArchive();
+      if (editorOpen) await openAnnotationEditor();
+      els.annotationStatus.textContent = "Medidas, máscara e informe actualizados.";
+      announce("Medidas y máscara actualizadas con la corrección manual.");
+    } catch (error) {
+      els.annotationStatus.textContent = `No se pudo guardar: ${error.message}`;
+    } finally {
+      els.annotationSave.disabled = false;
+    }
+  }
+
+  async function upload(file, tuning = {}, method = els.analysisMethod.value) {
     if (!file || state.busy) return;
     clearError();
 
@@ -1620,6 +1816,7 @@ ${clone.innerHTML}
       // El ajuste viaja al lado del archivo; vacío significa «los defectos»
       // (ADR-022). Como campo hermano no hace falta reserializar la imagen.
       if (Object.keys(tuning).length) body.append("tuning", JSON.stringify(tuning));
+      if (method !== "core") body.append("method", method);
       const record = await api("/inspections", { method: "POST", body });
       renderResult(record);
       await refreshArchive();
@@ -1757,10 +1954,36 @@ ${clone.innerHTML}
     return field;
   }
 
+  function tuningParameters() {
+    const core2 = els.analysisMethod.value === "core2";
+    return state.tuning.catalogue.filter((parameter) => {
+      if (core2) return !parameter.group.startsWith("core_");
+      return !parameter.group.startsWith("core2_");
+    });
+  }
+
+  function tuningGroupLabel(group) {
+    const labels = {
+      core_lesiones: "Lesiones · Core",
+      core_clorosis: "Clorosis · Core",
+      core2_lesiones: "Lesiones · Core2",
+      core2_clorosis: "Clorosis · Core2",
+      manchas: "Lesiones",
+      nervaduras: "Nervaduras",
+      clorosis: "Clorosis",
+      aislamiento: "Aislamiento",
+      calidad: "Calidad",
+      compuerta: "Validación de hoja",
+    };
+    return labels[group] || group;
+  }
+
   function renderTuning() {
-    const { catalogue, values } = state.tuning;
-    if (!catalogue.length) {
+    const { values } = state.tuning;
+    const catalogue = tuningParameters();
+    if (!state.tuning.catalogue.length || !catalogue.length) {
       els.tuningPanel.hidden = true;
+      updateTuning();
       return;
     }
     els.tuningPanel.hidden = false;
@@ -1772,7 +1995,7 @@ ${clone.innerHTML}
         group = parameter.group;
         const heading = document.createElement("p");
         heading.className = "tuning-group";
-        heading.textContent = group;
+        heading.textContent = tuningGroupLabel(group);
         nodes.push(heading);
       }
       nodes.push(tuningField(parameter, values[parameter.key] ?? parameter.default));
@@ -1785,7 +2008,7 @@ ${clone.innerHTML}
   // no arrastre el catálogo entero ni el trace se llene de valores repetidos.
   function tuningPayload() {
     const moved = {};
-    state.tuning.catalogue.forEach((parameter) => {
+    tuningParameters().forEach((parameter) => {
       const value = state.tuning.values[parameter.key];
       if (value === undefined || value === null) return;
       if (Math.abs(value - parameter.default) > 1e-9) moved[parameter.key] = value;
@@ -1804,19 +2027,29 @@ ${clone.innerHTML}
 
   function updateTuning() {
     if (!els.tuningApply) return;
+    els.tuningPanel.hidden = !state.tuning.catalogue.length;
     const payload = tuningPayload();
     const moved = Object.keys(payload).length;
+    els.tuningApply.hidden = !state.current;
     els.tuningBadge.hidden = moved === 0;
     els.tuningBadge.textContent = moved
       ? `${moved} ${moved === 1 ? "ajuste" : "ajustes"}`
       : "";
     const applied = state.current && state.current.trace ? state.current.trace.tuning || {} : {};
+    const appliedMethod =
+      state.current && state.current.trace ? state.current.trace.analysis_method || "core" : "core";
     // «Repetir» solo cuando hay una hoja cargada y el ajuste difiere del que la
     // midió: repetir lo mismo daría un registro gemelo.
-    els.tuningApply.disabled = !state.current || state.busy || sameTuning(payload, applied);
+    els.tuningApply.disabled =
+      !state.current ||
+      state.busy ||
+      (els.analysisMethod.value === appliedMethod && sameTuning(payload, applied));
   }
 
   function syncTuning(record) {
+    els.analysisMethod.value =
+      record && record.trace ? record.trace.analysis_method || "core" : "core";
+    updateCoreGuide();
     const applied = (record && record.trace && record.trace.tuning) || {};
     const values = { ...state.tuning.defaults };
     Object.keys(applied).forEach((key) => {
@@ -1825,6 +2058,7 @@ ${clone.innerHTML}
     });
     state.tuning.values = values;
     if (state.tuning.catalogue.length) renderTuning();
+    else updateTuning();
   }
 
   function resetTuning() {
@@ -1852,6 +2086,7 @@ ${clone.innerHTML}
     const record = state.current;
     if (!record || state.busy) return;
     const payload = tuningPayload();
+    const method = els.analysisMethod.value;
     const before = record.id;
     clearError();
     els.tuningStatus.textContent = "";
@@ -1872,14 +2107,14 @@ ${clone.innerHTML}
     }
 
     setBusy(false);
-    await upload(file, payload);
+    await upload(file, payload, method);
     // Si la corrida falló, ``upload`` ya mostró el motivo y no hay nada que decir.
     if (state.current && state.current.id !== before) {
       const moved = Object.keys(payload).length;
       els.tuningStatus.textContent = moved
         ? `Repetida con ${moved} ${moved === 1 ? "umbral ajustado" : "umbrales ajustados"}; ` +
           "la corrida anterior queda en el archivo."
-        : "Repetida con los umbrales por defecto.";
+        : `Repetida con ${method === "core2" ? "Core2" : "Core"}; la corrida anterior queda en el archivo.`;
     }
   }
 
@@ -1892,7 +2127,114 @@ ${clone.innerHTML}
     }
   }
 
+  function updateCoreGuide() {
+    const core2 = els.analysisMethod.value === "core2";
+    const method = core2 ? "Core2" : "Core";
+    const title = `Cómo detecta ${method}`;
+    els.coreGuideTitle.textContent = title;
+    els.coreGuideOpen.setAttribute("aria-label", `Cómo funciona ${method}`);
+    els.coreGuideOpen.title = `Cómo funciona ${method}`;
+    els.coreGuideCore.hidden = core2;
+    els.coreGuideCore2.hidden = !core2;
+  }
+
+  function renderExamples() {
+    const nodes = state.examples.map((example) => {
+      const tile = document.createElement("button");
+      tile.type = "button";
+      tile.className = "example-tile";
+      tile.dataset.filename = example.filename;
+      tile.setAttribute("aria-label", `Analizar ${example.title}. ${example.description}`);
+
+      const image = document.createElement("img");
+      image.src = example.image_url;
+      image.alt = "";
+      image.loading = "lazy";
+
+      const copy = document.createElement("span");
+      copy.className = "example-tile-copy";
+      const title = document.createElement("strong");
+      title.className = "example-tile-title";
+      title.textContent = example.title;
+      const description = document.createElement("span");
+      description.className = "example-tile-description";
+      description.textContent = example.description;
+      copy.append(title, description);
+      tile.append(image, copy);
+      return tile;
+    });
+    els.examplesGrid.replaceChildren(...nodes);
+  }
+
+  async function openExamples() {
+    if (!els.examplesDialog.open) els.examplesDialog.showModal();
+    if (state.examplesLoaded) return;
+    els.examplesStatus.textContent = "Cargando muestras…";
+    try {
+      const examples = await api("/examples");
+      state.examples = Array.isArray(examples) ? examples : [];
+      state.examplesLoaded = true;
+      renderExamples();
+      els.examplesStatus.textContent = state.examples.length
+        ? ""
+        : "No hay muestras disponibles.";
+    } catch (error) {
+      els.examplesStatus.textContent = `No se pudieron cargar las muestras: ${error.message}`;
+    }
+  }
+
+  async function chooseExample(filename) {
+    const example = state.examples.find((item) => item.filename === filename);
+    if (!example || state.busy) return;
+    els.examplesDialog.close();
+    try {
+      const response = await fetch(example.image_url, { credentials: "same-origin" });
+      if (!response.ok) throw new Error("No se pudo leer esta imagen de ejemplo.");
+      const blob = await response.blob();
+      await upload(new File([blob], example.filename, { type: blob.type || "image/png" }));
+    } catch (error) {
+      showError(error.message);
+    }
+  }
+
   function bindEvents() {
+    els.examplesOpen.addEventListener("click", openExamples);
+    els.examplesGrid.addEventListener("click", (event) => {
+      const tile = event.target.closest(".example-tile");
+      if (tile) chooseExample(tile.dataset.filename);
+    });
+    els.analysisMethod.addEventListener("change", () => {
+      renderTuning();
+      updateCoreGuide();
+    });
+    els.coreGuideOpen.addEventListener("click", () => {
+      updateCoreGuide();
+      if (!els.coreGuide.open) els.coreGuide.showModal();
+    });
+    els.coreGuide.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        els.coreGuide.close();
+      }
+    });
+    els.annotationsOpen.addEventListener("click", openAnnotationEditor);
+    els.annotationCanvas.addEventListener("pointerdown", startAnnotationStroke);
+    els.annotationCanvas.addEventListener("pointermove", continueAnnotationStroke);
+    els.annotationCanvas.addEventListener("pointerup", stopAnnotationStroke);
+    els.annotationCanvas.addEventListener("pointercancel", stopAnnotationStroke);
+    els.annotationWidth.addEventListener("input", () => {
+      els.annotationWidthValue.textContent = `${els.annotationWidth.value} px`;
+    });
+    els.annotationUndo.addEventListener("click", () => {
+      state.annotationStrokes.pop();
+      drawAnnotationStrokes();
+    });
+    els.annotationClear.addEventListener("click", () => {
+      state.annotationStrokes = [];
+      drawAnnotationStrokes();
+      els.annotationStatus.textContent = "Cambios sin guardar.";
+    });
+    els.annotationSave.addEventListener("click", saveAnnotationReference);
     els.pick.addEventListener("click", (event) => {
       event.stopPropagation();
       if (!state.busy) els.input.click();

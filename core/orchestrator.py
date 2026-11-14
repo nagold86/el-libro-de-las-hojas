@@ -39,6 +39,7 @@ class InspectionResult:
     lesion_mask: np.ndarray
     vein_mask: np.ndarray
     chlorosis_mask: np.ndarray
+    valid_mask: np.ndarray
     # Imagen efectivamente analizada: recorte de hoja con fondo en negro, o la
     # original si el aislamiento no tenía nada que separar. El overlay se
     # renderiza sobre esta imagen, no sobre el archivo subido.
@@ -176,6 +177,7 @@ class LeafInspector:
             lesion_mask=segmentation.lesions,
             vein_mask=segmentation.veins,
             chlorosis_mask=chlorosis.mask,
+            valid_mask=preprocessed.valid_mask,
             image=analysis,
             isolation=isolation.report,
             # Orden de ejecución: lo que entró, lo que se corrigió y lo que se

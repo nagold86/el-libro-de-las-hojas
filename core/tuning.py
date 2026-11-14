@@ -59,7 +59,7 @@ PARAMETERS: tuple[ParameterSpec, ...] = (
             "Puntaje (R−G)/(R+G). Bajarlo marca más tejido como mancha; subirlo "
             "solo deja pasar las manchas muy oxidadas."
         ),
-        group="manchas",
+        group="core_lesiones",
         minimum=0.0,
         maximum=0.40,
         step=0.01,
@@ -73,7 +73,7 @@ PARAMETERS: tuple[ParameterSpec, ...] = (
             "Cuánto más oscuro que su entorno debe ser un píxel para contar como "
             "mancha oscura. 0 apaga este criterio y deja solo el pardeamiento."
         ),
-        group="manchas",
+        group="core_lesiones",
         minimum=0.0,
         maximum=0.90,
         step=0.05,
@@ -101,7 +101,7 @@ PARAMETERS: tuple[ParameterSpec, ...] = (
             "Cuántos píxeles puede crecer una mancha desde su núcleo para "
             "recuperar el borde pálido. 0 deja solo el núcleo."
         ),
-        group="manchas",
+        group="core_lesiones",
         minimum=0.0,
         maximum=32.0,
         step=1.0,
@@ -145,12 +145,68 @@ PARAMETERS: tuple[ParameterSpec, ...] = (
             "Ángulo de matiz b*/(|a*|+b*): 0,63 es verde sano y 1 es amarillo "
             "puro. Bajarlo marca más tejido pálido como clorosis."
         ),
-        group="clorosis",
+        group="core_clorosis",
         minimum=0.70,
         maximum=0.99,
         step=0.01,
         default=0.85,
         unit="ángulo",
+    ),
+    ParameterSpec(
+        key="core2_redness_threshold",
+        label="Pardeamiento por cromaticidad",
+        help=(
+            "Umbral (R−G)/(R+G) usado por Core2. Bajarlo incluye cambios de color "
+            "más sutiles; subirlo exige más señal parda."
+        ),
+        group="core2_lesiones",
+        minimum=-0.10,
+        maximum=0.40,
+        step=0.01,
+        default=0.02,
+        unit="puntaje",
+    ),
+    ParameterSpec(
+        key="core2_darkness_threshold",
+        label="Oscuridad residual",
+        help=(
+            "Caída de luminancia tras normalizar la iluminación. Solo se suma a "
+            "lesión cuando también hay cambio cromático."
+        ),
+        group="core2_lesiones",
+        minimum=0.0,
+        maximum=0.80,
+        step=0.02,
+        default=0.22,
+        unit="fracción",
+    ),
+    ParameterSpec(
+        key="core2_chlorosis_yellow_threshold",
+        label="Cromaticidad amarilla",
+        help=(
+            "Peso de rojo y verde frente al azul. Bajarlo amplía el tejido candidato "
+            "a clorosis; el balance verde-rojo lo separa del tejido sano."
+        ),
+        group="core2_clorosis",
+        minimum=0.0,
+        maximum=0.45,
+        step=0.01,
+        default=0.10,
+        unit="cromaticidad",
+    ),
+    ParameterSpec(
+        key="core2_chlorosis_green_balance_max",
+        label="Límite verde-rojo de clorosis",
+        help=(
+            "Máximo g−r admitido como amarillo. Subirlo tolera más verde; bajarlo "
+            "hace la clorosis más selectiva."
+        ),
+        group="core2_clorosis",
+        minimum=0.0,
+        maximum=0.30,
+        step=0.01,
+        default=0.06,
+        unit="balance",
     ),
     ParameterSpec(
         key="isolation_sensitivity",
@@ -314,6 +370,10 @@ class Tuning:
     vein_percentile: float | None = None
     vein_kernel: float | None = None
     chlorosis_hue_threshold: float | None = None
+    core2_redness_threshold: float | None = None
+    core2_darkness_threshold: float | None = None
+    core2_chlorosis_yellow_threshold: float | None = None
+    core2_chlorosis_green_balance_max: float | None = None
     isolation_sensitivity: float | None = None
     min_sharpness: float | None = None
     min_tissue_fraction: float | None = None
@@ -407,6 +467,23 @@ class Tuning:
 
     def is_default(self) -> bool:
         return not self.changed()
+
+    def validate_for_method(self, method: str) -> Tuning:
+        """Reject method-specific controls belonging to the other segmenter."""
+        if method not in {"core", "core2"}:
+            raise InvalidTuning(f"Método de segmentación desconocido: {method!r}.")
+        allowed_prefix = "core2_" if method == "core2" else "core_"
+        incompatible = [
+            key
+            for key in self.changed()
+            if SPECS[key].group.startswith(("core_", "core2_"))
+            and not SPECS[key].group.startswith(allowed_prefix)
+        ]
+        if incompatible:
+            raise InvalidTuning(
+                f"Estos umbrales no corresponden a {method}: {', '.join(incompatible)}."
+            )
+        return self
 
     def _split(self) -> tuple[dict[str, float | int], dict[str, float | int]]:
         """Separa lo que va a la raíz de lo que va anidado en la compuerta."""

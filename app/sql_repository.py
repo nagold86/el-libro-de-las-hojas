@@ -216,6 +216,37 @@ class SqlInspectionRepository:
             raise InspectionNotFound(f"No existe la inspección {identifier}.")
         return _with_urls(row["payload"], self.media_prefix)
 
+    def update(
+        self,
+        record: dict[str, Any],
+        *,
+        result_png: bytes | None = None,
+        layers: Iterable[tuple[str, bytes]] | None = None,
+    ) -> dict[str, Any]:
+        """Actualiza las medidas consultables y el payload JSON en una transacción."""
+        identifier = str(record.get("id", ""))
+        self._validate_id(identifier)
+        payload = {key: value for key, value in record.items() if key not in URL_KEYS}
+        lesions = record.get("lesions") or {}
+        chlorosis = record.get("chlorosis") or {}
+        with self._session() as connection:
+            updated = connection.execute(
+                """UPDATE inspections
+                   SET lesion_count = %s, area_fraction = %s, chlorosis_fraction = %s,
+                       payload = %s::jsonb
+                   WHERE id = %s""",
+                (
+                    int(lesions.get("count") or 0),
+                    float(lesions.get("area_fraction") or 0.0),
+                    float(chlorosis.get("area_fraction") or 0.0),
+                    json.dumps(payload, ensure_ascii=False),
+                    identifier,
+                ),
+            ).rowcount
+        if not updated:
+            raise InspectionNotFound(f"No existe la inspección {identifier}.")
+        return _with_urls(payload, self.media_prefix)
+
     def list(
         self,
         limit: int | None = None,

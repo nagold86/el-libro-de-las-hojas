@@ -6,6 +6,101 @@ por Gandalf y aprobada por quien resulte afectado.
 
 ---
 
+## ADR-026 — La edición manual corrige máscaras, medidas e informes
+
+**Contexto.** ADR-025 guardaba los trazos como referencia aparte, sin alterar
+las cifras. Eso impedía que la persona corrigiera una lesión o una zona
+clorótica que el método no había reconocido, y el informe seguía mostrando la
+medición anterior.
+
+**Decisión.** Al guardar, volver a ejecutar el método desde la imagen original y
+reaplicar la secuencia completa de trazos: `healthy` elimina lesión y clorosis,
+`diseased` fuerza la máscara de lesión, `chlorosis` fuerza la máscara de clorosis
+y `erase` devuelve esos píxeles a la clasificación automática. Recalcular
+morfometría y descriptores con las máscaras corregidas, persistir las medidas y
+regenerar el overlay/capas. El informe del lote consume esas medidas e incluye
+clorosis y un indicador de hojas editadas; severidad sigue basada en lesión y no
+mezcla clorosis con pardeamiento.
+
+**Alternativas.** Mantener los trazos como referencia sin efecto queda
+descartado porque no cumple la corrección solicitada. Sumar lesión y clorosis
+en una sola máscara queda descartado porque duplicaría o confundiría familias.
+
+**Métricas de aceptación.** Una corrección de enfermedad debe mover las
+métricas por clase y la fila correspondiente del informe; corregir a sano debe
+reducirlas; borrar un trazo debe restaurar exactamente la máscara automática en
+esa zona. Al reabrir, overlay y medidas deben coincidir con los trazos guardados.
+
+**Reversibilidad.** Completa: se conserva la secuencia normalizada de trazos y
+cada guardado vuelve a procesar el original; borrar los trazos restaura el
+resultado automático.
+
+**Afecta a.** `core/manual_annotations.py`, `core/orchestrator.py`, ambos
+repositories, `app/routers/inspections.py`, `app/media.py`, `app/reporting.py` y
+el editor/informe del frontend. Este ADR supersede la semántica de referencia
+sin efecto de ADR-025.
+
+---
+
+## ADR-025 — Las correcciones manuales son referencias, no métricas automáticas
+
+**Contexto.** Una persona necesita poder señalar tejido sano y enfermo para
+revisar visualmente el detector, pero sustituir en silencio la máscara automática
+volvería opacas las cifras del pipeline y las agregaría al informe del lote como
+si las hubiera producido el método.
+
+**Decisión.** Guardar trazos manuales vectoriales, normalizados al recorte
+analizado, en un campo `manual_annotations` separado. El usuario puede marcar
+`healthy` o `diseased` y borrar trazos; los registros llevan fecha de edición.
+Las medidas y capas automáticas permanecen intactas.
+
+**Alternativas.** Sobrescribir máscaras y recalcular métricas queda descartado
+porque mezcla criterio humano y automático. Guardar solo la imagen del canvas
+queda descartado porque impide revisar y editar trazos individuales.
+
+**Métricas de aceptación.** Guardar y volver a abrir debe conservar exactamente
+los trazos y el encuadre; coordenadas fuera de `[0, 1]` deben rechazarse; las
+métricas automáticas deben permanecer iguales antes y después.
+
+**Reversibilidad.** Completa: borrar `manual_annotations` deja intactos el
+resultado y las capas generadas por el método.
+
+**Afecta a.** `app/schemas.py`, `app/store.py`, ambos repositories,
+`app/routers/inspections.py` y el editor manual del frontend.
+
+---
+
+## ADR-024 — Segunda segmentación clásica por luminancia normalizada y cromaticidad
+
+**Contexto.** El método vigente mezcla umbrales de rojo y oscurecimiento local.
+Una sombra de borde puede tener una respuesta local fuerte aunque mantenga el
+color del tejido; clorosis y pardeamiento también necesitan criterios distintos.
+El proyecto limita el análisis a visión clásica, sin entrenamiento ni modelos.
+
+**Decisión.** Agregar `core2` como alternativa determinista e intercambiable:
+estimar iluminación amplia con un suavizado gaussiano en Lab L*, normalizar luminancia, proponer lesiones
+por cromaticidad parda o por oscuridad residual con cambio cromático, y separar
+clorosis con cromaticidad amarilla frente a verde. Conservar `core` como valor
+predeterminado y registrar la alternativa usada en cada inspección.
+
+**Alternativas.** Ajustar otro umbral de oscuridad fue descartado porque no
+representa explícitamente iluminación; un segmentador aprendido fue descartado
+por la restricción del proyecto y la falta de máscaras multiclase suficientes.
+
+**Métricas de aceptación.** En pruebas sintéticas, una sombra uniforme no debe
+producir píxeles de lesión ni clorosis, mientras que manchas pardas, necrosis
+acromática y tejido amarillo deben conservarse. La aprobación agronómica queda
+pendiente hasta medir IoU por hoja contra anotaciones humanas; esta decisión no
+declara `core2` superior sobre imágenes reales.
+
+**Reversibilidad.** Completa: `core` sigue disponible y es el método por defecto;
+la selección de `core2` queda aislada por inspección.
+
+**Afecta a.** `core2/`, `core/pipeline.py`, `app/routers/inspections.py`,
+`app/media.py` y el selector del frontend.
+
+---
+
 ## ADR-023 — La compuerta juzga el tejido del recorte, no el verde de la escena
 
 **Contexto.** El aislamiento aprendió a recortar por contraste con el fondo y dejó

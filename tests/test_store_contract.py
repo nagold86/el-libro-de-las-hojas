@@ -57,6 +57,20 @@ def test_save_and_get_roundtrip(any_store):
     assert stored == record
 
 
+def test_update_persists_metadata_without_changing_media_urls(any_store):
+    record = any_store.save(b"original", b"resultado", payload(), layers())
+    record["manual_annotations"] = {
+        "updated_at": "2026-11-13T10:00:00+00:00",
+        "strokes": [],
+    }
+
+    updated = any_store.update(record)
+
+    assert updated["manual_annotations"] == record["manual_annotations"]
+    assert updated["result_url"] == record["result_url"]
+    assert any_store.get(record["id"]) == updated
+
+
 def test_original_bytes_are_the_original(any_store):
     record = any_store.save(b"original-crudo", b"resultado", payload())
 

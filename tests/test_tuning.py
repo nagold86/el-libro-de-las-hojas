@@ -49,6 +49,10 @@ def test_catalogue_is_complete_and_json_ready():
 def test_every_parameter_belongs_to_a_known_group():
     assert {spec.group for spec in PARAMETERS} <= {
         "manchas",
+        "core_lesiones",
+        "core_clorosis",
+        "core2_lesiones",
+        "core2_clorosis",
         "nervaduras",
         "clorosis",
         "aislamiento",
@@ -75,6 +79,31 @@ def test_only_the_moved_value_changes():
     assert settings.redness_threshold == 0.05
     assert settings.darkness_threshold == PipelineSettings().darkness_threshold
     assert settings.vein_kernel == PipelineSettings().vein_kernel
+
+
+def test_core2_controls_reach_the_second_pipeline():
+    tuning = Tuning.from_mapping(
+        {
+            "core2_redness_threshold": 0.12,
+            "core2_darkness_threshold": 0.36,
+            "core2_chlorosis_yellow_threshold": 0.20,
+            "core2_chlorosis_green_balance_max": 0.09,
+        }
+    )
+
+    pipeline = build_pipeline(tuning.to_settings(), segmentation_method="core2")
+
+    assert pipeline.segmenter.redness_threshold == 0.12
+    assert pipeline.segmenter.darkness_threshold == 0.36
+    assert pipeline.chlorosis.yellow_threshold == 0.20
+    assert pipeline.chlorosis.green_balance_max == 0.09
+
+
+def test_method_specific_controls_are_not_cross_applied():
+    with pytest.raises(InvalidTuning, match="no corresponden"):
+        Tuning.from_mapping({"redness_threshold": 0.1}).validate_for_method("core2")
+    with pytest.raises(InvalidTuning, match="no corresponden"):
+        Tuning.from_mapping({"core2_redness_threshold": 0.1}).validate_for_method("core")
 
 
 def test_moving_a_threshold_changes_the_method_fingerprint():
