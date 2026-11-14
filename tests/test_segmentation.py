@@ -60,6 +60,24 @@ def test_green_surface_has_no_lesions():
     assert result.params["lesion_fraction"] == 0.0
 
 
+def test_green_shadow_is_not_detected_as_a_lesion():
+    image, valid = _green()
+    cv2.rectangle(image, (35, 35), (165, 165), (37, 61, 29), -1)
+
+    result = LesionSegmenter().segment(image, valid)
+
+    assert not result.lesions[35:166, 35:166].any()
+
+
+def test_achromatic_necrosis_is_detected_as_a_lesion():
+    image, valid = _green()
+    cv2.circle(image, (100, 100), 18, (28, 28, 28), -1)
+
+    result = LesionSegmenter().segment(image, valid)
+
+    assert result.lesions[100, 100]
+
+
 def test_invalid_surface_is_excluded_from_the_mask():
     image, _ = _green()
     valid = np.zeros(image.shape[:2], dtype=bool)

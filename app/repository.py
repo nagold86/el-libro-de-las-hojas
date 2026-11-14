@@ -75,6 +75,39 @@ class InspectionRepository:
         except (OSError, json.JSONDecodeError) as exc:
             raise InspectionNotFound(f"La inspección {record_id} no se puede leer.") from exc
 
+    def update(
+        self,
+        record: dict[str, Any],
+        *,
+        result_png: bytes | None = None,
+        layers: Iterable[tuple[str, bytes]] | None = None,
+    ) -> dict[str, Any]:
+        """Reemplaza medidas y artefactos, con el JSON como punto de commit."""
+        identifier = str(record.get("id", ""))
+        self._validate_id(identifier)
+        path = self._path(identifier, ".json")
+        if not path.is_file():
+            raise InspectionNotFound(f"No existe la inspección {identifier}.")
+        previous_keys = set((record.get("layer_urls") or {}).keys())
+        if result_png is not None:
+            self._atomic_write(self._path(identifier, "-result.png"), result_png)
+        if layers is not None:
+            keys: list[str] = []
+            for key, png in layers:
+                if not LAYER_KEY_PATTERN.fullmatch(key):
+                    raise ValueError(f"Clave de capa inválida: {key!r}.")
+                self._atomic_write(self._path(identifier, LAYER_SUFFIX.format(key=key)), png)
+                keys.append(key)
+            record = {**record, **media_urls(identifier, keys, self.media_prefix)}
+        self._atomic_write(
+            path,
+            json.dumps(record, ensure_ascii=False, indent=2).encode("utf-8"),
+        )
+        if layers is not None:
+            for key in previous_keys - set(keys):
+                self._path(identifier, LAYER_SUFFIX.format(key=key)).unlink(missing_ok=True)
+        return self.get(identifier)
+
     def original_bytes(self, record_id: str) -> bytes:
         """Original guardado, para servir la ruta de media sin exponer el disco."""
         self._validate_id(record_id)

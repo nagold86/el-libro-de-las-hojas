@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import cv2
@@ -78,6 +79,104 @@ def test_upload_exposes_the_processing_layers(client: TestClient, png_bytes: byt
     first = client.get(body["layer_urls"][layers[0]["key"]])
     assert first.status_code == 200
     assert first.headers["content-type"] == "image/png"
+
+
+def test_upload_can_select_core2(client: TestClient, png_bytes: bytes):
+    response = client.post(
+        "/api/inspections",
+        data={"method": "core2"},
+        files={"file": ("hoja.png", png_bytes, "image/png")},
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["trace"]["analysis_method"] == "core2"
+    assert body["trace"]["segmentation"]["step"] == "core2_illumination_chromaticity"
+    assert body["trace"]["chlorosis"]["step"] == "core2_yellow_chromaticity"
+    assert client.get(body["result_url"]).status_code == 200
+
+
+def test_core2_tuning_is_saved_and_replayed(client: TestClient, png_bytes: bytes):
+    tuning = {
+        "core2_redness_threshold": 0.12,
+        "core2_darkness_threshold": 0.36,
+        "core2_chlorosis_yellow_threshold": 0.20,
+        "core2_chlorosis_green_balance_max": 0.09,
+    }
+    response = client.post(
+        "/api/inspections",
+        data={"method": "core2", "tuning": json.dumps(tuning)},
+        files={"file": ("hoja.png", png_bytes, "image/png")},
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["trace"]["tuning"] == tuning
+    assert body["trace"]["segmentation"]["redness_threshold"] == 0.12
+    assert body["trace"]["segmentation"]["darkness_threshold"] == 0.36
+    assert body["trace"]["chlorosis"]["yellow_threshold"] == 0.20
+    assert body["trace"]["chlorosis"]["green_balance_max"] == 0.09
+    assert client.get(body["result_url"]).status_code == 200
+
+
+def test_manual_annotations_are_saved_with_the_inspection(
+    client: TestClient, png_bytes: bytes
+):
+    created = _upload(client, png_bytes).json()
+    annotations = {
+        "strokes": [
+            {
+                "label": "diseased",
+                "width": 0.02,
+                "points": [{"x": 0.25, "y": 0.4}, {"x": 0.3, "y": 0.45}],
+            },
+            {
+                "label": "healthy",
+                "width": 0.01,
+                "points": [{"x": 0.6, "y": 0.7}],
+            },
+            {
+                "label": "chlorosis",
+                "width": 0.04,
+                "points": [{"x": 0.9, "y": 0.9}],
+            },
+        ]
+    }
+
+    saved = client.put(
+        f"/api/inspections/{created['id']}/annotations", json=annotations
+    )
+    fetched = client.get(f"/api/inspections/{created['id']}")
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["manual_annotations"]["strokes"] == annotations["strokes"]
+    assert saved.json()["manual_annotations"]["updated_at"]
+    assert fetched.json()["manual_annotations"] == saved.json()["manual_annotations"]
+    assert saved.json()["lesions"]["area_fraction"] > created["lesions"]["area_fraction"]
+    assert saved.json()["chlorosis"]["area_fraction"] > created["chlorosis"]["area_fraction"]
+    assert saved.json()["trace"]["manual_annotations_applied"] is True
+    assert saved.json()["trace"]["layers"][-1]["key"] == "edicion_manual_mascaras"
+    report = client.get("/api/reports/lot").json()
+    point = next(point for point in report["points"] if point["id"] == created["id"])
+    assert point["area_fraction"] == saved.json()["lesions"]["area_fraction"]
+    assert point["chlorosis_area_fraction"] == saved.json()["chlorosis"]["area_fraction"]
+    assert point["manual_annotations_applied"] is True
+    assert report["totals"]["manually_edited_images"] == 1
+
+
+def test_manual_annotations_reject_out_of_bounds_points(client: TestClient, png_bytes: bytes):
+    created = _upload(client, png_bytes).json()
+
+    response = client.put(
+        f"/api/inspections/{created['id']}/annotations",
+        json={
+            "strokes": [
+                {"label": "healthy", "width": 0.01, "points": [{"x": 1.2, "y": 0.5}]}
+            ]
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_list_and_get(client: TestClient, png_bytes: bytes):

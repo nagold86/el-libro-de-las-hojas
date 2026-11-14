@@ -31,6 +31,7 @@ from app.security import can_see, current_user
 from core.exceptions import InspectionNotFound, InvalidTuning
 from core.io import encode_png, read_photo
 from core.layers import LAYER_KEY_PATTERN
+from core.manual_annotations import apply_manual_annotations
 from core.orchestrator import LeafInspector
 from core.pipeline import build_pipeline
 from core.render import render_overlay, to_rgb
@@ -58,10 +59,22 @@ class RenderedRecord:
     layers: dict[str, bytes] = field(default_factory=dict)
 
 
-def render(original_png: bytes, inspector: LeafInspector) -> RenderedRecord:
+def render(
+    original_png: bytes,
+    inspector: LeafInspector,
+    manual_annotations: dict[str, Any] | None = None,
+) -> RenderedRecord:
     """Vuelve a correr el pipeline sobre el original guardado."""
     photo = read_photo(original_png)
     result = inspector.inspect(photo.image)
+    strokes = (manual_annotations or {}).get("strokes") or []
+    if strokes:
+        result = apply_manual_annotations(
+            result,
+            strokes,
+            inspector.pipeline.measurer,
+            inspector.pipeline.describer,
+        )
     # Anotado, igual que al crear el registro: el overlay guardado y el servido
     # tienen que ser el mismo PNG (ADR-019).
     overlay = render_overlay(
@@ -86,8 +99,9 @@ def inspector_for(request: Request, record: dict[str, Any]) -> LeafInspector:
     puede dejar la descarga en error.
     """
     trace = record.get("trace") or {}
+    method = str(trace.get("analysis_method") or "core")
     try:
-        tuning = Tuning.from_public(trace.get("tuning"))
+        tuning = Tuning.from_public(trace.get("tuning")).validate_for_method(method)
     except InvalidTuning:
         logger.warning(
             "Umbrales guardados fuera de catálogo en %s; se usa el defecto",
@@ -95,9 +109,11 @@ def inspector_for(request: Request, record: dict[str, Any]) -> LeafInspector:
             exc_info=True,
         )
         tuning = Tuning()
-    if tuning.is_default():
+    if tuning.is_default() and method == "core":
         return request.app.state.inspector
-    return LeafInspector(pipeline=build_pipeline(tuning.to_settings()))
+    return LeafInspector(
+        pipeline=build_pipeline(tuning.to_settings(), segmentation_method=method)
+    )
 
 
 class MediaCache:
@@ -128,12 +144,16 @@ class MediaCache:
         return len(self._items)
 
     def rendered(
-        self, identifier: str, original_png: bytes, inspector: LeafInspector
+        self,
+        identifier: str,
+        original_png: bytes,
+        inspector: LeafInspector,
+        manual_annotations: dict[str, Any] | None = None,
     ) -> RenderedRecord:
         cached = self.get(identifier)
         if cached is not None:
             return cached
-        produced = render(original_png, inspector)
+        produced = render(original_png, inspector, manual_annotations)
         self.put(identifier, produced)
         return produced
 
@@ -182,7 +202,10 @@ def media(filename: str, request: Request) -> Response:
         return _png(original)
 
     rendered = request.app.state.media_cache.rendered(
-        identifier, original, inspector_for(request, record)
+        identifier,
+        original,
+        inspector_for(request, record),
+        record.get("manual_annotations"),
     )
     if key is None:
         return _png(rendered.result)

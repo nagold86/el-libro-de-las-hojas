@@ -54,6 +54,11 @@ class PipelineSettings:
     # Clorosis (ADR-015): familia aparte del pardo. Mide pérdida de verde, no rojo.
     chlorosis_hue_threshold: float = 0.85
     chlorosis_min_chroma: float = 10.0
+    # Core2: umbrales de cromaticidad con unidades propias del segundo método.
+    core2_redness_threshold: float = 0.02
+    core2_darkness_threshold: float = 0.22
+    core2_chlorosis_yellow_threshold: float = 0.10
+    core2_chlorosis_green_balance_max: float = 0.06
     min_sharpness: float = 15.0
     max_saturated_fraction: float = 0.20
     min_valid_fraction: float = 0.50
@@ -74,7 +79,9 @@ class Pipeline:
     chlorosis: ChlorosisDetector = field(default_factory=ChlorosisDetector)
 
 
-def method_fingerprint(settings: PipelineSettings | None = None) -> str:
+def method_fingerprint(
+    settings: PipelineSettings | None = None, segmentation_method: str = "core"
+) -> str:
     """Huella corta de la corrida: parámetros declarados más versión publicada.
 
     Dos registros con la misma huella se midieron con el mismo método, así que
@@ -84,16 +91,56 @@ def method_fingerprint(settings: PipelineSettings | None = None) -> str:
     """
     config = settings or PipelineSettings()
     payload = json.dumps(
-        {"version": __version__, **asdict(config)},
+        {"version": __version__, "segmentation_method": segmentation_method, **asdict(config)},
         sort_keys=True,
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
-def build_pipeline(settings: PipelineSettings | None = None) -> Pipeline:
-    """Arma el pipeline clásico con las implementaciones por defecto."""
+def build_pipeline(
+    settings: PipelineSettings | None = None, segmentation_method: str = "core"
+) -> Pipeline:
+    """Arma el pipeline con el segmentador clásico seleccionado."""
     config = settings or PipelineSettings()
+    if segmentation_method == "core":
+        segmenter: Segmenter = LesionSegmenter(
+            min_area_fraction=config.min_lesion_area_fraction,
+            redness_threshold=config.redness_threshold,
+            darkness_threshold=config.darkness_threshold,
+            darkness_scale_fraction=config.darkness_scale_fraction,
+            hysteresis=config.hysteresis,
+            hysteresis_fraction=config.hysteresis_fraction,
+            hysteresis_max_growth_px=config.hysteresis_max_growth_px,
+            hysteresis_max_drop=config.hysteresis_max_drop,
+            vein_detector=VeinEnhancer(
+                kernel_size=config.vein_kernel,
+                percentile=config.vein_percentile,
+            ),
+        )
+        chlorosis: ChlorosisDetector = ChlorosisDetector(
+            hue_threshold=config.chlorosis_hue_threshold,
+            min_chroma=config.chlorosis_min_chroma,
+        )
+    elif segmentation_method == "core2":
+        from core2 import Core2ChlorosisDetector, Core2Segmenter
+
+        segmenter = Core2Segmenter(
+            redness_threshold=config.core2_redness_threshold,
+            darkness_threshold=config.core2_darkness_threshold,
+            min_area_fraction=config.min_lesion_area_fraction,
+            vein_detector=VeinEnhancer(
+                kernel_size=config.vein_kernel,
+                percentile=config.vein_percentile,
+            ),
+        )
+        chlorosis = Core2ChlorosisDetector(
+            yellow_threshold=config.core2_chlorosis_yellow_threshold,
+            green_balance_max=config.core2_chlorosis_green_balance_max,
+        )
+    else:
+        raise ValueError(f"Método de segmentación desconocido: {segmentation_method!r}.")
+
     return Pipeline(
         isolator=LeafIsolator(
             max_side=config.isolation_max_side,
@@ -107,20 +154,7 @@ def build_pipeline(settings: PipelineSettings | None = None) -> Pipeline:
             denoise=config.denoise,
         ),
         domain_gate=LeafDomainGate(config.domain_thresholds),
-        segmenter=LesionSegmenter(
-            min_area_fraction=config.min_lesion_area_fraction,
-            redness_threshold=config.redness_threshold,
-            darkness_threshold=config.darkness_threshold,
-            darkness_scale_fraction=config.darkness_scale_fraction,
-            hysteresis=config.hysteresis,
-            hysteresis_fraction=config.hysteresis_fraction,
-            hysteresis_max_growth_px=config.hysteresis_max_growth_px,
-            hysteresis_max_drop=config.hysteresis_max_drop,
-            vein_detector=VeinEnhancer(
-                kernel_size=config.vein_kernel,
-                percentile=config.vein_percentile,
-            ),
-        ),
+        segmenter=segmenter,
         measurer=DefectMeasurer(),
         describer=ColorTextureDescriber(),
         quality_gate=QualityGate(
@@ -128,8 +162,5 @@ def build_pipeline(settings: PipelineSettings | None = None) -> Pipeline:
             max_saturated_fraction=config.max_saturated_fraction,
             min_valid_fraction=config.min_valid_fraction,
         ),
-        chlorosis=ChlorosisDetector(
-            hue_threshold=config.chlorosis_hue_threshold,
-            min_chroma=config.chlorosis_min_chroma,
-        ),
+        chlorosis=chlorosis,
     )

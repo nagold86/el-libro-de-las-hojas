@@ -80,6 +80,25 @@ class ImageOut(BaseModel):
     format: str
 
 
+class AnnotationPoint(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class AnnotationStroke(BaseModel):
+    label: Literal["healthy", "diseased", "chlorosis", "erase"]
+    width: float = Field(gt=0.0, le=0.15)
+    points: list[AnnotationPoint] = Field(min_length=1, max_length=512)
+
+
+class ManualAnnotationsIn(BaseModel):
+    strokes: list[AnnotationStroke] = Field(max_length=1000)
+
+
+class ManualAnnotationsOut(ManualAnnotationsIn):
+    updated_at: datetime
+
+
 class QualityOut(BaseModel):
     usable: bool
     sharpness: float = Field(ge=0)
@@ -111,6 +130,8 @@ class AppearanceOut(BaseModel):
 
 class TraceOut(BaseModel):
     preprocess: dict[str, Any]
+    analysis_method: Literal["core", "core2"] = "core"
+    manual_annotations_applied: bool = False
     # Vacío en registros anteriores a la compuerta de dominio; los nuevos
     # siempre traen {gate, score, features}.
     domain: dict[str, Any] = Field(default_factory=dict)
@@ -144,6 +165,7 @@ class InspectionOut(BaseModel):
     chlorosis: LesionsOut | None = None
     appearance: AppearanceOut
     trace: TraceOut
+    manual_annotations: ManualAnnotationsOut | None = None
     result_url: str
     original_url: str
     # PNG por clave de capa. Vacío en registros anteriores a la traza visual.
@@ -192,6 +214,11 @@ class LotTotalsOut(BaseModel):
     mean_vein_density: float = Field(ge=0, le=1)
     mean_browning_index: float = Field(ge=0)
     mean_sharpness: float = Field(ge=0)
+    chlorosis: int = Field(default=0, ge=0)
+    mean_chlorosis_area_fraction: float = Field(default=0.0, ge=0, le=1)
+    median_chlorosis_area_fraction: float = Field(default=0.0, ge=0, le=1)
+    max_chlorosis_area_fraction: float = Field(default=0.0, ge=0, le=1)
+    manually_edited_images: int = Field(default=0, ge=0)
 
 
 class SeverityBinOut(BaseModel):
@@ -216,6 +243,9 @@ class LotPointOut(BaseModel):
     sharpness: float = Field(ge=0)
     quality_flags: list[str]
     isolation_method: str
+    chlorosis_area_fraction: float = Field(default=0.0, ge=0, le=1)
+    chlorosis_count: int = Field(default=0, ge=0)
+    manual_annotations_applied: bool = False
 
 
 class LotReportOut(BaseModel):
