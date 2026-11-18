@@ -1,65 +1,102 @@
-# Fellowship — análisis de hojas de tabaco
+# El Libro de las Hojas — análisis de hojas de tabaco
 
-Caracterización de hojas de tabaco a partir de imágenes, usando **solo
-procesamiento de imágenes clásico** (OpenCV, NumPy, SciPy, pandas). Sin
-aprendizaje profundo, sin modelos preentrenados.
+Desarrollé esta aplicación para caracterizar hojas de tabaco a partir de
+imágenes, usando **solo procesamiento de imágenes clásico** (OpenCV y NumPy),
+sin aprendizaje profundo ni modelos preentrenados.
 
-La identidad visual sigue un sistema propio de inspiración tolkieniana
-(pergamino, tinta y oro), definido en [`docs/DESIGN.md`](docs/DESIGN.md) y
-propiedad del agente de diseño.
+## Presentación académica
+
+- **Materia:** Técnicas de Procesamiento Digital de Imágenes
+- **Año y cuatrimestre de cursada:** 2026, segundo cuatrimestre
+- **Nombre y apellido:** Nicolás Gold
+- **Docente:** Juan Bonini
+
+### ¿Qué me motivó a crear este proyecto?
+
+Trabajo en el rubro del tabaco y participo en la adquisición de materia prima.
+Por eso, me interesó explorar cómo el procesamiento digital de imágenes puede
+ayudarme a observar y caracterizar hojas de tabaco de una forma práctica,
+reproducible y fácil de interpretar. Desarrollé la aplicación para medir
+lesiones, clorosis, color y textura, y para poder revisar visualmente cómo se
+obtiene cada resultado. Elegí técnicas clásicas de visión por computadora para
+que el método y sus decisiones sean visibles, en lugar de depender de un modelo
+opaco.
+
+### Problemáticas que encontré y cómo las resolví
+
+- **Separar las lesiones pardas del amarillamiento (clorosis):** ambos pueden
+  aparecer en una misma hoja y confundirse por el color. Implementé criterios
+  distintos: detecto la lesión por sus características de color y la clorosis
+  por el matiz; las informo por separado.
+- **Variaciones de iluminación, fondo y tamaño de las imágenes:** podían afectar
+  el recorte y las mediciones de textura. Incorporé una etapa que aísla la hoja
+  por contraste con el fondo y llevo las imágenes a un tamaño de referencia para
+  comparar la textura de forma más consistente.
+- **Variantes y duplicados en el conjunto de datos:** contar cada archivo como
+  una muestra independiente podía sesgar la evaluación. Organicé el análisis
+  por hoja de origen y detecté duplicados para no tratarlos como casos
+  distintos.
+- **Hacer comprensibles y verificables los resultados:** no me alcanzaba con
+  mostrar una medida final. Por eso, incorporé una traza visual de las etapas,
+  registro de parámetros y pruebas para comprobar el comportamiento del
+  procesamiento.
 
 ## Documentación
 
 | Documento | Contenido |
 |---|---|
-| [`fellowship/PIPELINE.md`](fellowship/PIPELINE.md) | Contrato de arquitectura, dueño de cada archivo y dataset real |
-| [`fellowship/README.md`](fellowship/README.md) | El equipo de diez agentes y sus reglas |
-| [`fellowship/roster.yaml`](fellowship/roster.yaml) | Registro legible por máquina del equipo |
 | [`docs/DECISIONES.md`](docs/DECISIONES.md) | ADRs: core sin HTTP, visión clásica, unidad de muestreo, segmentación |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | Sistema visual “El Libro de las Hojas”: paleta, tipografía y componentes |
 | [`docs/CONVENCIONES.md`](docs/CONVENCIONES.md) | Idioma, nombres, tests y commits |
-| [`docs/VALIDACION.md`](docs/VALIDACION.md) | Veredictos de Boromir por lote |
-| [`docs/TRASPASO.md`](docs/TRASPASO.md) | Estado al cierre de la sesión: qué hay, dónde y qué sigue |
+| [`docs/VALIDACION.md`](docs/VALIDACION.md) | Resultados de validación por lote |
+| [`docs/TRASPASO.md`](docs/TRASPASO.md) | Estado y próximos pasos del proyecto |
 
 ## Mapa del proyecto
 
 | Carpeta | Qué es | ¿Se versiona? |
 |---|---|---|
 | `core/` | La librería: aislamiento, preproceso, calidad, compuerta de dominio, segmentación, clorosis, morfometría, descriptores y render. Solo NumPy/OpenCV, sin HTTP. | sí |
-| `app/` | FastAPI: valida la subida, llama al `LeafInspector` y persiste. No hace visión. | sí |
-| `frontend/` | Una sola página: subida, medidas, capas del proceso, almanaque e informe. | sí |
+| `app/` | FastAPI: valida la subida, llama al `LeafInspector` y persiste. | sí |
+| `frontend/` | Una sola página: subida, medidas, capas del proceso, almanaque e informe; incluye diez imágenes de prueba servidas por CDN. | sí |
 | `tests/` | Contrato, arquitectura y unitarios. `python -m pytest` en verde. | sí |
 | `docs/` | ADRs (`DECISIONES.md`), diseño visual, convenciones, veredictos y traspaso. | sí |
-| `fellowship/` | El equipo de agentes y el contrato de arquitectura. | sí |
 | `imgs/` | Dataset dado, inmutable (2000 PNG de 800×800). | no |
-| `data/golden/` | Conjunto dorado: manifest y máscaras anotadas. Vive solo en el equipo de trabajo: son datos, no código. | no |
+| `data/golden/` | Conjunto dorado de manifest y máscaras anotadas que uso para validar; son datos, no código. | no |
 | `sandbox/` | Scripts de trabajo, fotos externas y almacén de demo. Ver [`sandbox/LEEME.md`](sandbox/LEEME.md). | no |
 | `storage/` | Almanaque local de la API. | no |
 
 ## Dataset
 
-`imgs/` contiene 210 hojas originales, 1680 variantes aumentadas (8 por hoja) y
-110 variantes con nombre duplicado. La unidad de muestreo es **la hoja**, no el
-archivo. Las imágenes son recortes de superficie foliar: se analizan lesiones,
-color, textura y nervaduras, no el contorno de la hoja completa. Las fotos
-nuevas con fondo pasan primero por `LeafIsolator`, que recorta la hoja dominante;
-los recortes del dataset se conservan tal cual (`primer_plano`).
+El conjunto que analizo en `imgs/` contiene 210 hojas originales, 1680 variantes
+aumentadas (8 por hoja) y 110 variantes con nombre duplicado. Tomo **la hoja**, no
+el archivo, como unidad de muestreo. Las imágenes son recortes de superficie
+foliar: analizo lesiones, color, textura y nervaduras, no el contorno de la hoja
+completa. Cuando subo fotos nuevas con fondo, `LeafIsolator` recorta primero la
+hoja dominante; los recortes del conjunto de datos se conservan tal cual
+(`primer_plano`). Incluí diez muestras para la interfaz en `frontend/examples/`;
+Vercel las sirve desde su CDN, sin empaquetar el conjunto completo ni invocar la
+función Python para cada imagen. El selector descarga miniaturas WebP de 320 px
+(≈98 KB en total) y conserva el PNG original para analizarlo solo cuando se elige
+una muestra.
 
-## Qué mide
+## Qué analizo
 
-Dos familias de tejido, separadas a propósito (ADR-014 y ADR-015):
+Distingo dos familias de tejido (ADR-014 y ADR-015):
 
-- **Lesión parda**: tejido oxidado, donde el rojo alcanza al verde. El umbral
-  estricto siembra las manchas y un umbral bajo, calculado por hoja, recupera el
-  halo pálido que las rodea sin tocar la nervadura.
-- **Clorosis**: tejido que perdió el verde y quedó amarillo, sin oxidarse. Se
-  mide por ángulo de matiz en Lab, no por canales de color, y se reporta aparte
-  porque puede solaparse con la lesión.
+- **Lesión parda**: identifico el tejido oxidado, donde el rojo alcanza al
+  verde. Uso un umbral estricto para marcar las manchas y otro más bajo,
+  calculado por hoja, para recuperar el halo pálido sin tocar la nervadura.
+- **Clorosis**: identifico por separado el tejido que perdió el verde y quedó
+  amarillo, sin oxidarse. La mido por ángulo de matiz en Lab, no por canales de
+  color, porque puede solaparse con la lesión.
 
-Cada inspección deja una **traza visual** de 17 capas: lo que entró, lo que se
-corrigió y lo que se decidió, con el mismo orden en la pantalla y en el disco.
+En cada inspección que proceso guardo una **traza visual** de 17 capas: lo que
+entró, lo que corregí y las decisiones del análisis, en el mismo orden en la
+pantalla y en el disco.
 
 ## Cómo correrlo
+
+Para ejecutar la aplicación que desarrollé:
 
 ```powershell
 python -m venv .venv
@@ -69,15 +106,17 @@ python -m uvicorn app.main:app --reload --port 8765
 python -m pytest
 ```
 
-La raíz `/` sirve la pantalla de **El Libro de las Hojas** y los artefactos se
-publican bajo `/media`. El storage por defecto es `storage/`; se cambia con
+Al ejecutar la aplicación, la raíz `/` sirve la pantalla de **El Libro de las
+Hojas** y los artefactos se publican bajo `/media`. El almacenamiento por defecto
+es `storage/`; puedo cambiarlo con
 `FELLOWSHIP_STORAGE_DIR` (también existen `FELLOWSHIP_FRONTEND_DIR`,
 `FELLOWSHIP_MAX_UPLOAD_BYTES` y `FELLOWSHIP_ALLOWED_FORMATS`).
 
 ### Con base de datos
 
-El registro de análisis puede vivir en Postgres en vez de en el disco (ADR-016).
-Sin `DATABASE_URL` nada cambia: los archivos siguen siendo el camino por defecto.
+Configuré la persistencia para que el registro de análisis pueda guardarse en
+Postgres en vez de en el disco (ADR-016). Sin `DATABASE_URL`, los archivos siguen
+siendo el camino por defecto.
 
 ```powershell
 docker compose up -d                                  # postgres 16 en 5433
@@ -96,15 +135,20 @@ python -m uvicorn app.main:app --reload --port 8765
   `sslmode=require`; en serverless se abre una conexión por request en vez de un
   pool. `psycopg` se instala con `pip install -e ".[dev]"` y solo se importa
   cuando hay base configurada.
+- En serverless con Postgres, el PNG del resultado se reutiliza desde la caché
+  al mostrar la inspección y las capas se codifican recién cuando se solicitan;
+  así se evita volver a ejecutar el pipeline y codificar capas que el repositorio
+  SQL no persiste.
 - Los tests de base se saltean solos si no hay servidor. Con la base levantada
   corren además los de Postgres —contrato, repositorio, `/media`, login e
   historial— contra `fellowship_test` (se cambia con
   `FELLOWSHIP_TEST_DATABASE_URL`).
 
-### Con login
+### Acceso con login
 
-Con `DATABASE_URL` configurada, el almanaque pide usuario y contraseña (ADR-017);
-sin base la demo sigue abierta, sin puerta. El primer administrador se crea solo:
+Cuando configuro `DATABASE_URL`, el almanaque pide usuario y contraseña
+(ADR-017); sin base, la demo sigue abierta. El primer administrador se crea
+automáticamente:
 
 ```powershell
 $env:DATABASE_URL = "postgresql://fellowship:fellowship@127.0.0.1:5433/fellowship"
@@ -192,12 +236,12 @@ queda deshabilitado: borraría más de lo que se ve en pantalla.
 
 ## Despliegue
 
-Demo pública: [el-libro-de-las-hojas.vercel.app](https://el-libro-de-las-hojas.vercel.app).
-Repositorio: [nagold86/el-libro-de-las-hojas](https://github.com/nagold86/el-libro-de-las-hojas).
+Publiqué una demo en [el-libro-de-las-hojas.vercel.app](https://el-libro-de-las-hojas.vercel.app)
+y el código fuente en [GitHub](https://github.com/nagold86/el-libro-de-las-hojas).
 
-La pantalla y la API corren como una sola función Python (`app/main.py`, 60 s de
-duración máxima según `vercel.json`), así que no hay CORS ni segundo servicio.
-Son condiciones de demo, no de producción (ADR-012):
+Configuré la pantalla y la API para correr como una sola función Python
+(`app/main.py`, 60 s de duración máxima según `vercel.json`), así que no hay CORS
+ni segundo servicio. Estas son condiciones de la demo, no de producción (ADR-012):
 
 - **Almacenamiento efímero.** Con `VERCEL` presente, `app/config.py` mueve el
   repositorio a `/tmp/fellowship-storage` y baja el límite de subida a 4 MB
@@ -208,8 +252,8 @@ Son condiciones de demo, no de producción (ADR-012):
   medidas sobreviven lo que viva la instancia y pueden perderse al reiniciarse.
   Con base configurada el historial y los usuarios persisten (ADR-016 y ADR-017),
   y la demo deja de estar abierta: pide usuario y contraseña.
-- **Solo viaja lo necesario.** `.vercelignore` deja fuera `imgs/`, `storage/`,
-  `docs/`, `fellowship/`, `tests/` y `sandbox/`.
+- **Solo publico lo necesario.** La configuración de Vercel excluye el conjunto
+  de imágenes, los archivos locales, las pruebas y los recursos de desarrollo.
 
 El repo está conectado al proyecto: cada push a `main` publica solo. Para
 publicar sin commit, desde la raíz:
@@ -223,10 +267,10 @@ Con base configurada, un deployment contra una base nueva necesita el esquema:
 `python -m app.db.migrate` con `DATABASE_URL` apuntando a esa base. Sin él, el
 login responde `500` (`relation "users" does not exist`).
 
-## Estado
+## Estado actual
 
-Pipeline clásico completo, medido y verificado con la suite de tests (282
-pruebas en verde; los de Postgres se saltean solos si no hay servidor):
+Implementé y validé el pipeline clásico con la suite de pruebas (282 pruebas en
+verde; las de Postgres se omiten si no hay servidor):
 
 - `core/` implementado de punta a punta (aislamiento, preproceso de dos vistas,
   calidad, compuerta de dominio, segmentación con histéresis, clorosis,
@@ -243,7 +287,6 @@ pruebas en verde; los de Postgres se saltean solos si no hay servidor):
 - Publicado en Vercel como demo (`/tmp`, 4 MB): subida, informe, artefactos y
   vaciado verificados contra la URL pública, sin errores de consola (ADR-012).
 
-Lo que falta está en [`docs/TRASPASO.md`](docs/TRASPASO.md): corregir a mano las
-máscaras del conjunto dorado, y decidir si la clorosis debe restarse del área
-reportada como lesión.
-
+Como próximos pasos, me queda corregir a mano las máscaras del conjunto dorado y
+decidir si debo restar la clorosis del área que reporto como lesión. Detallo el
+estado en [`docs/TRASPASO.md`](docs/TRASPASO.md).
