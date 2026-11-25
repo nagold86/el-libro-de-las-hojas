@@ -57,7 +57,7 @@ opaco.
 |---|---|---|
 | `core/` | La librería: aislamiento, preproceso, calidad, compuerta de dominio, segmentación, clorosis, morfometría, descriptores y render. Solo NumPy/OpenCV, sin HTTP. | sí |
 | `app/` | FastAPI: valida la subida, llama al `LeafInspector` y persiste. | sí |
-| `frontend/` | Una sola página: subida, medidas, capas del proceso, almanaque e informe; incluye diez imágenes de prueba servidas por CDN. | sí |
+| `frontend/` | Una sola página: subida, medidas, capas del proceso, almanaque e informe; las diez imágenes de prueba las sirve la API desde `app/example_images/`. | sí |
 | `tests/` | Contrato, arquitectura y unitarios. `python -m pytest` en verde. | sí |
 | `docs/` | ADRs (`DECISIONES.md`), diseño visual, convenciones, veredictos y traspaso. | sí |
 | `imgs/` | Dataset dado, inmutable (2000 PNG de 800×800). | no |
@@ -73,11 +73,17 @@ el archivo, como unidad de muestreo. Las imágenes son recortes de superficie
 foliar: analizo lesiones, color, textura y nervaduras, no el contorno de la hoja
 completa. Cuando subo fotos nuevas con fondo, `LeafIsolator` recorta primero la
 hoja dominante; los recortes del conjunto de datos se conservan tal cual
-(`primer_plano`). Incluí diez muestras para la interfaz en `frontend/examples/`;
-Vercel las sirve desde su CDN, sin empaquetar el conjunto completo ni invocar la
-función Python para cada imagen. El selector descarga miniaturas WebP de 320 px
-(≈98 KB en total) y conserva el PNG original para analizarlo solo cuando se elige
-una muestra.
+(`primer_plano`). Incluí diez muestras para la interfaz en `app/example_images/`; la API las
+sirve con `GET /api/examples/{filename}`. El selector muestra miniaturas WebP
+(unos 98 KB las diez, en `app/example_images/previews/`) que da
+`GET /api/examples/previews/{filename}`; el catálogo las indica en `preview_url`
+y el PNG original solo se descarga al elegir una muestra. Ambas rutas responden con
+`Cache-Control: public, max-age=31536000, immutable`, así que si se reemplaza una
+imagen hay que cambiarle el nombre. El despliegue empaqueta solo esas imágenes:
+`imgs/` (el conjunto completo) queda excluido de Vercel.
+`frontend/examples/` (PNG, `catalogue.json` y miniaturas WebP en `previews/`) es
+material preparado para una posible opción futura de servir las muestras desde
+una CDN estática; hoy el código no lo usa.
 
 ## Qué analizo
 

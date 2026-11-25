@@ -2147,9 +2147,10 @@ ${clone.innerHTML}
       tile.setAttribute("aria-label", `Analizar ${example.title}. ${example.description}`);
 
       const image = document.createElement("img");
-      image.src = example.image_url;
+      image.src = example.preview_url || example.image_url;
       image.alt = "";
       image.loading = "lazy";
+      image.decoding = "async";
 
       const copy = document.createElement("span");
       copy.className = "example-tile-copy";
